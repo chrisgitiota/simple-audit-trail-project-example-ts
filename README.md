@@ -1,4 +1,4 @@
-# Simple Notarization TS example
+# Simple Audit Trail TS example
 
 A simple IOTA Audit Trail example project for typescript
 
