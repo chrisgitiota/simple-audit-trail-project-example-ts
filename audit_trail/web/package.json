@@ -1,0 +1,13 @@
+{
+  "name": "@iota/audit-trail",
+  "description": "WASM bindings for IOTA Audit Trail. To be used in JavaScript/TypeScript.",
+  "version": "0.1.0-alpha",
+  "license": "Apache-2.0",
+  "homepage": "https://www.iota.org",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iotaledger/notarization.git"
+  },
+  "module": "index.js",
+  "types": "index.d.ts"
+}
