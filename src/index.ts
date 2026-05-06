@@ -84,6 +84,8 @@ export async function createTrail(): Promise<void> {
     console.log("Updatable metadata:", trail.updatableMetadata);
     console.log("Locking config:", trail.lockingConfig);
 
+    trail.lockingConfig()
+
     assert.equal(trail.sequenceNumber, 1n);
     assert.ok(trail.immutableMetadata);
     assert.equal(trail.immutableMetadata?.name, "Example Audit Trail");

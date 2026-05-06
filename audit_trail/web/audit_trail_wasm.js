@@ -5,6 +5,19 @@ import { Secp256k1PublicKey } from '@iota/iota-sdk/keypairs/secp256k1';
 import { Secp256r1PublicKey } from '@iota/iota-sdk/keypairs/secp256r1';
 import { TransactionDataBuilder } from '@iota/iota-sdk/transactions';
 
+/**
+ * Transaction wrapper for adding a record.
+ *
+ * @remarks
+ * While the trail's `writeLock` is active the call aborts. Tagged writes additionally require the
+ * tag to exist in the trail registry and the supplied capability's role to allow that tag.
+ * Records are assigned the trail's current monotonic sequence number, which is never reused even
+ * after deletions.
+ *
+ * Requires the {@link Permission.AddRecord} permission.
+ *
+ * Emits a {@link RecordAdded} event on success.
+ */
 export class AddRecord {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -31,6 +44,15 @@ export class AddRecord {
         wasm.__wbg_addrecord_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link RecordAdded} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -42,6 +64,14 @@ export class AddRecord {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -52,6 +82,14 @@ export class AddRecord {
 }
 if (Symbol.dispose) AddRecord.prototype[Symbol.dispose] = AddRecord.prototype.free;
 
+/**
+ * Transaction wrapper for adding a record tag to the trail registry.
+ *
+ * @remarks
+ * Aborts on-chain if the tag is already in the registry.
+ *
+ * Requires the {@link Permission.AddRecordTags} permission.
+ */
 export class AddRecordTag {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -78,6 +116,13 @@ export class AddRecordTag {
         wasm.__wbg_addrecordtag_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -89,6 +134,14 @@ export class AddRecordTag {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -99,6 +152,18 @@ export class AddRecordTag {
 }
 if (Symbol.dispose) AddRecordTag.prototype[Symbol.dispose] = AddRecordTag.prototype.free;
 
+/**
+ * Builder that assembles the parameters for creating a new audit trail.
+ *
+ * @remarks
+ * The resulting transaction publishes the trail as a *shared* object, seeds the reserved
+ * {@link RoleMap.initialAdminRoleName | Admin} role with the recommended admin permissions, and
+ * transfers a freshly minted initial-admin {@link Capability} to the configured admin address. An
+ * admin address must be set (either through {@link AuditTrailBuilder.withAdmin} or by constructing
+ * the builder via {@link AuditTrailClient.createTrail}, which seeds it with the signer); otherwise
+ * {@link AuditTrailBuilder.finish} produces a transaction that fails to build. When an initial
+ * record is set, its tag — if any — must already be in the configured record-tag list.
+ */
 export class AuditTrailBuilder {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -125,6 +190,20 @@ export class AuditTrailBuilder {
         wasm.__wbg_audittrailbuilder_free(ptr, 0);
     }
     /**
+     * Finalizes the builder into a transaction wrapper.
+     *
+     * @remarks
+     * On execution the audit-trail package shares the new trail object, seeds the reserved
+     * {@link RoleMap.initialAdminRoleName | Admin} role, transfers an initial-admin capability to
+     * the configured admin address, and optionally stores the initial record at sequence number
+     * `0`.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link CreateTrail} transaction.
+     *
+     * @throws When the builder is missing a required field or its initial record references a tag
+     * that is not in the record-tag list.
+     *
+     * Emits an {@link AuditTrailCreated} event on success.
      * @returns {TransactionBuilder<CreateTrail>}
      */
     finish() {
@@ -136,6 +215,20 @@ export class AuditTrailBuilder {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Sets the initial admin address.
+     *
+     * @remarks
+     * On execution the trail's role map is seeded with a single role named `"Admin"` carrying the
+     * recommended admin permissions, and a freshly minted initial-admin capability is transferred
+     * to this address. Setting an admin is required before {@link AuditTrailBuilder.finish} can
+     * produce a viable transaction; constructing the builder via
+     * {@link AuditTrailClient.createTrail} already seeds it with the signer address.
+     *
+     * @param admin - Address that will receive the initial-admin capability.
+     *
+     * @returns The same builder, with the admin address configured.
+     *
+     * @throws When `admin` is not a valid IOTA address.
      * @param {string} admin
      * @returns {AuditTrailBuilder}
      */
@@ -150,6 +243,19 @@ export class AuditTrailBuilder {
         return AuditTrailBuilder.__wrap(ret[0]);
     }
     /**
+     * Sets the initial record using a raw byte payload.
+     *
+     * @remarks
+     * The record is stored at sequence number `0`.
+     * When `tag` is provided it must already appear in the list passed to
+     * {@link AuditTrailBuilder.withRecordTags}; the on-chain call aborts otherwise.
+     * Bumps the tag's usage count on success.
+     *
+     * @param data - Raw bytes stored as the initial record payload.
+     * @param metadata - Optional application-defined metadata stored alongside the record.
+     * @param tag - Optional trail-owned tag attached to the record.
+     *
+     * @returns The same builder, with the initial record configured.
      * @param {Uint8Array} data
      * @param {string | null} [metadata]
      * @param {string | null} [tag]
@@ -165,6 +271,20 @@ export class AuditTrailBuilder {
         return AuditTrailBuilder.__wrap(ret);
     }
     /**
+     * Sets the initial record using a UTF-8 string payload.
+     *
+     * @remarks
+     * The record is stored at sequence number `0`.
+     *
+     * When `tag` is provided it must already appear in the list passed to
+     * {@link AuditTrailBuilder.withRecordTags}; the on-chain call aborts otherwise.
+     * Bumps the tag's usage count on success.
+     *
+     * @param data - UTF-8 text payload for the initial record.
+     * @param metadata - Optional application-defined metadata stored alongside the record.
+     * @param tag - Optional trail-owned tag attached to the record.
+     *
+     * @returns The same builder, with the initial record configured.
      * @param {string} data
      * @param {string | null} [metadata]
      * @param {string | null} [tag]
@@ -182,6 +302,15 @@ export class AuditTrailBuilder {
         return AuditTrailBuilder.__wrap(ret);
     }
     /**
+     * Sets the {@link LockingConfig} for the trail.
+     *
+     * @remarks
+     * `config.deleteTrailLock` must not be {@link TimeLock.withUntilDestroyed}; trail creation
+     * aborts on-chain otherwise.
+     *
+     * @param config - Combined delete-record window, delete-trail lock, and write lock.
+     *
+     * @returns The same builder, with the locking configuration applied.
      * @param {LockingConfig} config
      * @returns {AuditTrailBuilder}
      */
@@ -193,6 +322,16 @@ export class AuditTrailBuilder {
         return AuditTrailBuilder.__wrap(ret);
     }
     /**
+     * Sets the canonical list of record tags owned by the trail.
+     *
+     * @remarks
+     * Every tag name later referenced by an initial record, an {@link TrailRecords.add} call, or a
+     * role's {@link RoleTags} allowlist must appear in this list. Tags are inserted with a usage
+     * count of zero.
+     *
+     * @param tags - Tag names that the trail will recognize.
+     *
+     * @returns The same builder, with the record-tag registry configured.
      * @param {string[]} tags
      * @returns {AuditTrailBuilder}
      */
@@ -204,6 +343,16 @@ export class AuditTrailBuilder {
         return AuditTrailBuilder.__wrap(ret);
     }
     /**
+     * Sets the trail's {@link ImmutableMetadata} (name and optional description).
+     *
+     * @remarks
+     * Stored once at trail creation and exposed read-only thereafter. Use
+     * {@link AuditTrailBuilder.withUpdatableMetadata} for the mutable counterpart.
+     *
+     * @param name - Human-readable trail name.
+     * @param description - Optional human-readable description.
+     *
+     * @returns The same builder, with the immutable metadata configured.
      * @param {string} name
      * @param {string | null} [description]
      * @returns {AuditTrailBuilder}
@@ -218,6 +367,15 @@ export class AuditTrailBuilder {
         return AuditTrailBuilder.__wrap(ret);
     }
     /**
+     * Sets the trail's `updatableMetadata` field.
+     *
+     * @remarks
+     * This field can later be replaced or cleared by holders of {@link Permission.UpdateMetadata}
+     * via {@link AuditTrailHandle.updateMetadata}.
+     *
+     * @param metadata - Initial value of the trail's `updatableMetadata` field.
+     *
+     * @returns The same builder, with the updatable metadata configured.
      * @param {string} metadata
      * @returns {AuditTrailBuilder}
      */
@@ -231,6 +389,14 @@ export class AuditTrailBuilder {
 }
 if (Symbol.dispose) AuditTrailBuilder.prototype[Symbol.dispose] = AuditTrailBuilder.prototype.free;
 
+/**
+ * Signing audit-trail client.
+ *
+ * @remarks
+ * Wraps an {@link AuditTrailClientReadOnly} together with a transaction signer so that typed
+ * write transactions can be built. The actual transaction submission and execution remain the
+ * responsibility of the caller.
+ */
 export class AuditTrailClient {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -250,6 +416,9 @@ export class AuditTrailClient {
         wasm.__wbg_audittrailclient_free(ptr, 0);
     }
     /**
+     * Returns the chain ID of the network this client is connected to.
+     *
+     * @returns Hex-encoded chain identifier.
      * @returns {string}
      */
     chainId() {
@@ -265,6 +434,14 @@ export class AuditTrailClient {
         }
     }
     /**
+     * Creates a signing client from an existing read-only client and signer.
+     *
+     * @param client - Read-only client whose network and package configuration will be reused.
+     * @param signer - Signer that will sign transactions built by this client.
+     *
+     * @returns A signing audit-trail client bound to `client`'s network and the given signer.
+     *
+     * @throws When the signer cannot be queried for its public key or address.
      * @param {AuditTrailClientReadOnly} client
      * @param {TransactionSigner} signer
      * @returns {Promise<AuditTrailClient>}
@@ -276,6 +453,19 @@ export class AuditTrailClient {
         return ret;
     }
     /**
+     * Creates a signing client directly from an IOTA client and signer.
+     *
+     * @remarks
+     * Pass `packageId` when connecting to a custom deployment that is not known to the package
+     * registry; otherwise package IDs are resolved from the connected network.
+     *
+     * @param iotaClient - IOTA client used to talk to the network.
+     * @param signer - Signer that will sign transactions built by this client.
+     * @param packageId - Optional audit-trail package ID override.
+     *
+     * @returns A signing audit-trail client bound to the resolved or supplied package IDs.
+     *
+     * @throws When package resolution fails or the supplied `packageId` is malformed.
      * @param {IotaClient} iota_client
      * @param {TransactionSigner} signer
      * @param {string | null} [package_id]
@@ -288,6 +478,15 @@ export class AuditTrailClient {
         return ret;
     }
     /**
+     * Creates a signing client directly from an IOTA client, signer, and full package overrides.
+     *
+     * @param iotaClient - IOTA client used to talk to the network.
+     * @param signer - Signer that will sign transactions built by this client.
+     * @param packageOverrides - Optional explicit package IDs; when omitted the registry is used.
+     *
+     * @returns A signing audit-trail client bound to the resolved or supplied package IDs.
+     *
+     * @throws When package resolution fails or the supplied overrides are malformed.
      * @param {IotaClient} iota_client
      * @param {TransactionSigner} signer
      * @param {PackageOverrides | null} [package_overrides]
@@ -303,6 +502,14 @@ export class AuditTrailClient {
         return ret;
     }
     /**
+     * Creates a builder for a new audit trail.
+     *
+     * @remarks
+     * The builder is pre-populated with the signer address as the initial admin, so the trail's
+     * initial-admin capability lands in the signer's wallet on execution. Override with
+     * {@link AuditTrailBuilder.withAdmin} when a different recipient is needed.
+     *
+     * @returns A pre-configured {@link AuditTrailBuilder}.
      * @returns {AuditTrailBuilder}
      */
     createTrail() {
@@ -310,6 +517,9 @@ export class AuditTrailClient {
         return AuditTrailBuilder.__wrap(ret);
     }
     /**
+     * Returns the underlying IOTA client used to talk to the network.
+     *
+     * @returns The IOTA client carried by the wrapped read-only client.
      * @returns {IotaClient}
      */
     iotaClient() {
@@ -317,6 +527,9 @@ export class AuditTrailClient {
         return ret;
     }
     /**
+     * Returns the human-readable name of the network this client is connected to.
+     *
+     * @returns Network name (e.g. `"mainnet"`, `"testnet"`, `"localnet"`).
      * @returns {string}
      */
     network() {
@@ -332,6 +545,9 @@ export class AuditTrailClient {
         }
     }
     /**
+     * Returns the resolved audit-trail package upgrade history.
+     *
+     * @returns Stringified object IDs of every published version, most recent first.
      * @returns {string[]}
      */
     packageHistory() {
@@ -341,6 +557,9 @@ export class AuditTrailClient {
         return v1;
     }
     /**
+     * Returns the audit-trail package ID currently in use.
+     *
+     * @returns Stringified object ID of the resolved audit-trail package.
      * @returns {string}
      */
     packageId() {
@@ -356,6 +575,12 @@ export class AuditTrailClient {
         }
     }
     /**
+     * Returns the read-only view of this client.
+     *
+     * @remarks
+     * Useful when passing the client into code that only needs read capabilities.
+     *
+     * @returns A {@link AuditTrailClientReadOnly} sharing this client's network configuration.
      * @returns {AuditTrailClientReadOnly}
      */
     readOnly() {
@@ -363,6 +588,9 @@ export class AuditTrailClient {
         return AuditTrailClientReadOnly.__wrap(ret);
     }
     /**
+     * Returns the address that signs transactions built by this client.
+     *
+     * @returns Stringified IOTA address of the signer.
      * @returns {string}
      */
     senderAddress() {
@@ -378,6 +606,11 @@ export class AuditTrailClient {
         }
     }
     /**
+     * Returns the public key of the address that signs transactions built by this client.
+     *
+     * @returns Public key bound to the signer.
+     *
+     * @throws When the signer's public key cannot be converted to the expected representation.
      * @returns {PublicKey}
      */
     senderPublicKey() {
@@ -388,6 +621,9 @@ export class AuditTrailClient {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
+     * Returns the signer attached to this client.
+     *
+     * @returns A clone of the configured transaction signer.
      * @returns {TransactionSigner}
      */
     signer() {
@@ -395,6 +631,9 @@ export class AuditTrailClient {
         return ret;
     }
     /**
+     * Returns the `tf_components` package ID currently in use.
+     *
+     * @returns Stringified object ID of the resolved `tf_components` package.
      * @returns {string}
      */
     tfComponentsPackageId() {
@@ -410,6 +649,17 @@ export class AuditTrailClient {
         }
     }
     /**
+     * Returns a trail-scoped handle for the given trail object ID.
+     *
+     * @remarks
+     * Creating the handle is cheap. Network reads and transaction building happen on the returned
+     * handle and its subsystem wrappers.
+     *
+     * @param trailId - Object ID of the trail this handle should target.
+     *
+     * @returns A signing {@link AuditTrailHandle} bound to `trailId`.
+     *
+     * @throws When `trailId` is not a valid object ID.
      * @param {string} trail_id
      * @returns {AuditTrailHandle}
      */
@@ -423,6 +673,17 @@ export class AuditTrailClient {
         return AuditTrailHandle.__wrap(ret[0]);
     }
     /**
+     * Returns a clone of this client whose transactions are signed by `signer` instead.
+     *
+     * @remarks
+     * Network and package configuration are preserved. The returned client's
+     * {@link AuditTrailClient.senderAddress} reflects the new signer.
+     *
+     * @param signer - Replacement transaction signer.
+     *
+     * @returns A new client with the signer swapped in.
+     *
+     * @throws When the replacement signer cannot be queried for its public key or address.
      * @param {TransactionSigner} signer
      * @returns {Promise<AuditTrailClient>}
      */
@@ -434,6 +695,14 @@ export class AuditTrailClient {
 }
 if (Symbol.dispose) AuditTrailClient.prototype[Symbol.dispose] = AuditTrailClient.prototype.free;
 
+/**
+ * Read-only audit-trail client.
+ *
+ * @remarks
+ * This is the main entry point for package resolution and typed reads. Use
+ * {@link AuditTrailClientReadOnly.trail} to obtain an {@link AuditTrailHandle} bound to a single
+ * trail object.
+ */
 export class AuditTrailClientReadOnly {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -453,6 +722,9 @@ export class AuditTrailClientReadOnly {
         wasm.__wbg_audittrailclientreadonly_free(ptr, 0);
     }
     /**
+     * Returns the chain ID of the network this client is connected to.
+     *
+     * @returns Hex-encoded chain identifier.
      * @returns {string}
      */
     chainId() {
@@ -468,6 +740,17 @@ export class AuditTrailClientReadOnly {
         }
     }
     /**
+     * Creates a read-only client by resolving package IDs from the connected network.
+     *
+     * @remarks
+     * This is the recommended constructor for official deployments tracked by the built-in
+     * package registry.
+     *
+     * @param iotaClient - IOTA client used to talk to the network.
+     *
+     * @returns A read-only audit-trail client bound to the resolved package IDs.
+     *
+     * @throws When package resolution fails for the connected network.
      * @param {IotaClient} iota_client
      * @returns {Promise<AuditTrailClientReadOnly>}
      */
@@ -476,6 +759,18 @@ export class AuditTrailClientReadOnly {
         return ret;
     }
     /**
+     * Creates a read-only client with explicit package overrides.
+     *
+     * @remarks
+     * Prefer this when targeting a local deployment, preview environment, or any package pair
+     * that is not yet part of the SDK's built-in registry.
+     *
+     * @param iotaClient - IOTA client used to talk to the network.
+     * @param packageOverrides - Package IDs to use instead of registry lookups.
+     *
+     * @returns A read-only audit-trail client bound to the supplied package IDs.
+     *
+     * @throws When the supplied package IDs are malformed or cannot be resolved.
      * @param {IotaClient} iota_client
      * @param {PackageOverrides} package_overrides
      * @returns {Promise<AuditTrailClientReadOnly>}
@@ -487,6 +782,17 @@ export class AuditTrailClientReadOnly {
         return ret;
     }
     /**
+     * Creates a read-only client while overriding only the audit-trail package ID.
+     *
+     * @remarks
+     * Compatibility helper for callers that need exactly one package override.
+     *
+     * @param iotaClient - IOTA client used to talk to the network.
+     * @param packageId - Audit-trail package ID to use instead of the registry entry.
+     *
+     * @returns A read-only audit-trail client bound to `packageId`.
+     *
+     * @throws When `packageId` is malformed or cannot be resolved.
      * @param {IotaClient} iota_client
      * @param {string} package_id
      * @returns {Promise<AuditTrailClientReadOnly>}
@@ -498,6 +804,9 @@ export class AuditTrailClientReadOnly {
         return ret;
     }
     /**
+     * Returns the underlying IOTA client used to talk to the network.
+     *
+     * @returns The IOTA client passed to (or constructed during) creation of this client.
      * @returns {IotaClient}
      */
     iotaClient() {
@@ -505,6 +814,9 @@ export class AuditTrailClientReadOnly {
         return ret;
     }
     /**
+     * Returns the human-readable name of the network this client is connected to.
+     *
+     * @returns Network name (e.g. `"mainnet"`, `"testnet"`, `"localnet"`).
      * @returns {string}
      */
     network() {
@@ -520,6 +832,9 @@ export class AuditTrailClientReadOnly {
         }
     }
     /**
+     * Returns the resolved audit-trail package upgrade history.
+     *
+     * @returns Stringified object IDs of every published version, most recent first.
      * @returns {string[]}
      */
     packageHistory() {
@@ -529,6 +844,9 @@ export class AuditTrailClientReadOnly {
         return v1;
     }
     /**
+     * Returns the audit-trail package ID currently in use.
+     *
+     * @returns Stringified object ID of the resolved audit-trail package.
      * @returns {string}
      */
     packageId() {
@@ -544,6 +862,9 @@ export class AuditTrailClientReadOnly {
         }
     }
     /**
+     * Returns the `tf_components` package ID currently in use.
+     *
+     * @returns Stringified object ID of the resolved `tf_components` package.
      * @returns {string}
      */
     tfComponentsPackageId() {
@@ -559,6 +880,17 @@ export class AuditTrailClientReadOnly {
         }
     }
     /**
+     * Returns a trail-scoped handle for the given trail object ID.
+     *
+     * @remarks
+     * Creating the handle is cheap. Reads only happen when methods are called on the returned
+     * handle.
+     *
+     * @param trailId - Object ID of the trail this handle should target.
+     *
+     * @returns Read-only {@link AuditTrailHandle} bound to `trailId`.
+     *
+     * @throws When `trailId` is not a valid object ID.
      * @param {string} trail_id
      * @returns {AuditTrailHandle}
      */
@@ -574,6 +906,9 @@ export class AuditTrailClientReadOnly {
 }
 if (Symbol.dispose) AuditTrailClientReadOnly.prototype[Symbol.dispose] = AuditTrailClientReadOnly.prototype.free;
 
+/**
+ * Event payload emitted when a trail is created.
+ */
 export class AuditTrailCreated {
     toJSON() {
         return {
@@ -596,6 +931,7 @@ export class AuditTrailCreated {
         wasm.__wbg_audittrailcreated_free(ptr, 0);
     }
     /**
+     * Address that created the trail.
      * @returns {string}
      */
     get creator() {
@@ -611,6 +947,7 @@ export class AuditTrailCreated {
         }
     }
     /**
+     * Millisecond event timestamp.
      * @returns {bigint}
      */
     get timestamp() {
@@ -618,6 +955,7 @@ export class AuditTrailCreated {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Newly created trail object ID.
      * @returns {string}
      */
     get trailId() {
@@ -633,6 +971,7 @@ export class AuditTrailCreated {
         }
     }
     /**
+     * Address that created the trail.
      * @param {string} arg0
      */
     set creator(arg0) {
@@ -641,12 +980,14 @@ export class AuditTrailCreated {
         wasm.__wbg_set_audittrailcreated_creator(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Millisecond event timestamp.
      * @param {bigint} arg0
      */
     set timestamp(arg0) {
         wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Newly created trail object ID.
      * @param {string} arg0
      */
     set trailId(arg0) {
@@ -657,6 +998,9 @@ export class AuditTrailCreated {
 }
 if (Symbol.dispose) AuditTrailCreated.prototype[Symbol.dispose] = AuditTrailCreated.prototype.free;
 
+/**
+ * Event payload emitted when a trail is deleted.
+ */
 export class AuditTrailDeleted {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -685,6 +1029,7 @@ export class AuditTrailDeleted {
         wasm.__wbg_audittraildeleted_free(ptr, 0);
     }
     /**
+     * Millisecond event timestamp.
      * @returns {bigint}
      */
     get timestamp() {
@@ -692,6 +1037,7 @@ export class AuditTrailDeleted {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Deleted trail object ID.
      * @returns {string}
      */
     get trailId() {
@@ -707,12 +1053,14 @@ export class AuditTrailDeleted {
         }
     }
     /**
+     * Millisecond event timestamp.
      * @param {bigint} arg0
      */
     set timestamp(arg0) {
         wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Deleted trail object ID.
      * @param {string} arg0
      */
     set trailId(arg0) {
@@ -723,6 +1071,16 @@ export class AuditTrailDeleted {
 }
 if (Symbol.dispose) AuditTrailDeleted.prototype[Symbol.dispose] = AuditTrailDeleted.prototype.free;
 
+/**
+ * Handle bound to a specific audit-trail object.
+ *
+ * @remarks
+ * `AuditTrailHandle` keeps one trail ID together with the originating client so all trail-scoped
+ * reads and transaction builders can be discovered from a single value. Use the subsystem
+ * accessors {@link AuditTrailHandle.records}, {@link AuditTrailHandle.access},
+ * {@link AuditTrailHandle.locking}, and {@link AuditTrailHandle.tags} to reach the corresponding
+ * APIs.
+ */
 export class AuditTrailHandle {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -749,6 +1107,12 @@ export class AuditTrailHandle {
         wasm.__wbg_audittrailhandle_free(ptr, 0);
     }
     /**
+     * Returns the access-control API scoped to this trail.
+     *
+     * @remarks
+     * Use this for roles, capabilities, and access-policy updates.
+     *
+     * @returns A {@link TrailAccess} wrapper bound to this trail.
      * @returns {TrailAccess}
      */
     access() {
@@ -756,6 +1120,19 @@ export class AuditTrailHandle {
         return TrailAccess.__wrap(ret);
     }
     /**
+     * Builds a delete transaction for this trail.
+     *
+     * @remarks
+     * Deletion additionally requires the trail to be empty (the on-chain call aborts otherwise)
+     * and the configured `deleteTrailLock` to have elapsed.
+     *
+     * Requires the {@link Permission.DeleteAuditTrail} permission.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link DeleteAuditTrail} transaction.
+     *
+     * @throws When the handle was created from a read-only client.
+     *
+     * Emits an {@link AuditTrailDeleted} event on success.
      * @returns {TransactionBuilder<DeleteAuditTrail>}
      */
     deleteAuditTrail() {
@@ -766,6 +1143,14 @@ export class AuditTrailHandle {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Loads the full on-chain trail object.
+     *
+     * @remarks
+     * Each call fetches a fresh snapshot from chain state.
+     *
+     * @returns The current {@link OnChainAuditTrail} state of this trail.
+     *
+     * @throws When the trail object cannot be fetched or decoded.
      * @returns {Promise<OnChainAuditTrail>}
      */
     get() {
@@ -773,6 +1158,12 @@ export class AuditTrailHandle {
         return ret;
     }
     /**
+     * Returns the locking API scoped to this trail.
+     *
+     * @remarks
+     * Use this for inspecting lock state and updating locking rules.
+     *
+     * @returns A {@link TrailLocking} wrapper bound to this trail.
      * @returns {TrailLocking}
      */
     locking() {
@@ -780,6 +1171,17 @@ export class AuditTrailHandle {
         return TrailLocking.__wrap(ret);
     }
     /**
+     * Builds a migration transaction for this trail.
+     *
+     * @remarks
+     * Bumps the trail's stored data layout to the current package version. Intended to be called
+     * once after the audit-trail Move package is upgraded.
+     *
+     * Requires the {@link Permission.Migrate} permission.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link Migrate} transaction.
+     *
+     * @throws When the handle was created from a read-only client.
      * @returns {TransactionBuilder<Migrate>}
      */
     migrate() {
@@ -790,6 +1192,12 @@ export class AuditTrailHandle {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Returns the record API scoped to this trail.
+     *
+     * @remarks
+     * Use this for record reads, appends, and deletions.
+     *
+     * @returns A {@link TrailRecords} wrapper bound to this trail.
      * @returns {TrailRecords}
      */
     records() {
@@ -797,6 +1205,13 @@ export class AuditTrailHandle {
         return TrailRecords.__wrap(ret);
     }
     /**
+     * Returns the tag-registry API scoped to this trail.
+     *
+     * @remarks
+     * Use this for managing the canonical tag registry that record writes and role-tag
+     * restrictions must reference.
+     *
+     * @returns A {@link TrailTags} wrapper bound to this trail.
      * @returns {TrailTags}
      */
     tags() {
@@ -804,6 +1219,19 @@ export class AuditTrailHandle {
         return TrailTags.__wrap(ret);
     }
     /**
+     * Builds a mutable-metadata update transaction for this trail.
+     *
+     * @remarks
+     * Replaces or clears the trail's `updatableMetadata` field.
+     *
+     * Requires the {@link Permission.UpdateMetadata} permission.
+     *
+     * @param metadata - New value for the trail's `updatableMetadata` field, or `null` to clear
+     * it.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link UpdateMetadata} transaction.
+     *
+     * @throws When the handle was created from a read-only client.
      * @param {string | null} [metadata]
      * @returns {TransactionBuilder<UpdateMetadata>}
      */
@@ -819,6 +1247,13 @@ export class AuditTrailHandle {
 }
 if (Symbol.dispose) AuditTrailHandle.prototype[Symbol.dispose] = AuditTrailHandle.prototype.free;
 
+/**
+ * Capability data describing a granted role and its validity window.
+ *
+ * @remarks
+ * A capability grants exactly one role against exactly one trail and may additionally restrict
+ * who may use it and during which time window it is valid.
+ */
 export class Capability {
     toJSON() {
         return {
@@ -844,6 +1279,7 @@ export class Capability {
         wasm.__wbg_capability_free(ptr, 0);
     }
     /**
+     * Capability object ID.
      * @returns {string}
      */
     get id() {
@@ -859,6 +1295,8 @@ export class Capability {
         }
     }
     /**
+     * Address bound to the capability. When `null`, any holder may present the capability for
+     * authorization.
      * @returns {string | undefined}
      */
     get issuedTo() {
@@ -871,6 +1309,7 @@ export class Capability {
         return v1;
     }
     /**
+     * Role granted by the capability.
      * @returns {string}
      */
     get role() {
@@ -886,6 +1325,7 @@ export class Capability {
         }
     }
     /**
+     * Trail object ID protected by the capability.
      * @returns {string}
      */
     get targetKey() {
@@ -901,6 +1341,8 @@ export class Capability {
         }
     }
     /**
+     * Earliest millisecond timestamp (since the Unix epoch, inclusive) at which the capability
+     * is valid. When `null`, the capability is valid from its creation time.
      * @returns {bigint | undefined}
      */
     get validFrom() {
@@ -908,6 +1350,8 @@ export class Capability {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Latest millisecond timestamp (since the Unix epoch, inclusive) at which the capability is
+     * still valid. When `null`, the capability does not expire.
      * @returns {bigint | undefined}
      */
     get validUntil() {
@@ -915,6 +1359,7 @@ export class Capability {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Capability object ID.
      * @param {string} arg0
      */
     set id(arg0) {
@@ -923,6 +1368,8 @@ export class Capability {
         wasm.__wbg_set_capability_id(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Address bound to the capability. When `null`, any holder may present the capability for
+     * authorization.
      * @param {string | null} [arg0]
      */
     set issuedTo(arg0) {
@@ -931,6 +1378,7 @@ export class Capability {
         wasm.__wbg_set_capability_issuedTo(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Role granted by the capability.
      * @param {string} arg0
      */
     set role(arg0) {
@@ -939,6 +1387,7 @@ export class Capability {
         wasm.__wbg_set_capability_role(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Trail object ID protected by the capability.
      * @param {string} arg0
      */
     set targetKey(arg0) {
@@ -947,12 +1396,16 @@ export class Capability {
         wasm.__wbg_set_capability_targetKey(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Earliest millisecond timestamp (since the Unix epoch, inclusive) at which the capability
+     * is valid. When `null`, the capability is valid from its creation time.
      * @param {bigint | null} [arg0]
      */
     set validFrom(arg0) {
         wasm.__wbg_set_capability_validFrom(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
     }
     /**
+     * Latest millisecond timestamp (since the Unix epoch, inclusive) at which the capability is
+     * still valid. When `null`, the capability does not expire.
      * @param {bigint | null} [arg0]
      */
     set validUntil(arg0) {
@@ -961,6 +1414,9 @@ export class Capability {
 }
 if (Symbol.dispose) Capability.prototype[Symbol.dispose] = Capability.prototype.free;
 
+/**
+ * Permissions required to administer capabilities, as enforced by the trail.
+ */
 export class CapabilityAdminPermissions {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -989,6 +1445,7 @@ export class CapabilityAdminPermissions {
         wasm.__wbg_capabilityadminpermissions_free(ptr, 0);
     }
     /**
+     * Permission required to issue capabilities.
      * @returns {Permission}
      */
     get add() {
@@ -996,6 +1453,7 @@ export class CapabilityAdminPermissions {
         return ret;
     }
     /**
+     * Permission required to revoke capabilities.
      * @returns {Permission}
      */
     get revoke() {
@@ -1003,12 +1461,14 @@ export class CapabilityAdminPermissions {
         return ret;
     }
     /**
+     * Permission required to issue capabilities.
      * @param {Permission} arg0
      */
     set add(arg0) {
         wasm.__wbg_set_capabilityadminpermissions_add(this.__wbg_ptr, arg0);
     }
     /**
+     * Permission required to revoke capabilities.
      * @param {Permission} arg0
      */
     set revoke(arg0) {
@@ -1017,6 +1477,9 @@ export class CapabilityAdminPermissions {
 }
 if (Symbol.dispose) CapabilityAdminPermissions.prototype[Symbol.dispose] = CapabilityAdminPermissions.prototype.free;
 
+/**
+ * Event payload emitted when a capability is destroyed.
+ */
 export class CapabilityDestroyed {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1049,6 +1512,7 @@ export class CapabilityDestroyed {
         wasm.__wbg_capabilitydestroyed_free(ptr, 0);
     }
     /**
+     * Destroyed capability object ID.
      * @returns {string}
      */
     get capabilityId() {
@@ -1064,6 +1528,7 @@ export class CapabilityDestroyed {
         }
     }
     /**
+     * Address bound to the capability, if one had been assigned.
      * @returns {string | undefined}
      */
     get issuedTo() {
@@ -1076,6 +1541,7 @@ export class CapabilityDestroyed {
         return v1;
     }
     /**
+     * Role granted by the capability.
      * @returns {string}
      */
     get role() {
@@ -1091,6 +1557,7 @@ export class CapabilityDestroyed {
         }
     }
     /**
+     * Trail object ID protected by the capability.
      * @returns {string}
      */
     get targetKey() {
@@ -1106,6 +1573,8 @@ export class CapabilityDestroyed {
         }
     }
     /**
+     * Earliest millisecond timestamp (since the Unix epoch, inclusive) at which the capability
+     * became valid. `null` when no lower bound had been set.
      * @returns {bigint | undefined}
      */
     get validFrom() {
@@ -1113,6 +1582,8 @@ export class CapabilityDestroyed {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Latest millisecond timestamp (since the Unix epoch, inclusive) at which the capability had
+     * been valid. `null` when no expiry had been set.
      * @returns {bigint | undefined}
      */
     get validUntil() {
@@ -1120,6 +1591,7 @@ export class CapabilityDestroyed {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Destroyed capability object ID.
      * @param {string} arg0
      */
     set capabilityId(arg0) {
@@ -1128,6 +1600,7 @@ export class CapabilityDestroyed {
         wasm.__wbg_set_capability_targetKey(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Address bound to the capability, if one had been assigned.
      * @param {string | null} [arg0]
      */
     set issuedTo(arg0) {
@@ -1136,6 +1609,7 @@ export class CapabilityDestroyed {
         wasm.__wbg_set_capability_issuedTo(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Role granted by the capability.
      * @param {string} arg0
      */
     set role(arg0) {
@@ -1144,6 +1618,7 @@ export class CapabilityDestroyed {
         wasm.__wbg_set_capability_role(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Trail object ID protected by the capability.
      * @param {string} arg0
      */
     set targetKey(arg0) {
@@ -1152,12 +1627,16 @@ export class CapabilityDestroyed {
         wasm.__wbg_set_capability_id(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Earliest millisecond timestamp (since the Unix epoch, inclusive) at which the capability
+     * became valid. `null` when no lower bound had been set.
      * @param {bigint | null} [arg0]
      */
     set validFrom(arg0) {
         wasm.__wbg_set_capability_validFrom(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
     }
     /**
+     * Latest millisecond timestamp (since the Unix epoch, inclusive) at which the capability had
+     * been valid. `null` when no expiry had been set.
      * @param {bigint | null} [arg0]
      */
     set validUntil(arg0) {
@@ -1166,6 +1645,14 @@ export class CapabilityDestroyed {
 }
 if (Symbol.dispose) CapabilityDestroyed.prototype[Symbol.dispose] = CapabilityDestroyed.prototype.free;
 
+/**
+ * Capability issuance options.
+ *
+ * @remarks
+ * These fields configure restrictions on the issued capability object. Matching against the
+ * current caller and the on-chain timestamp happens whenever the capability is later presented
+ * for authorization, not at issue time.
+ */
 export class CapabilityIssueOptions {
     toJSON() {
         return {
@@ -1188,6 +1675,12 @@ export class CapabilityIssueOptions {
         wasm.__wbg_capabilityissueoptions_free(ptr, 0);
     }
     /**
+     * Creates capability issuance options.
+     *
+     * @param issuedTo - Optional recipient address; `null` keeps the capability with the caller.
+     * @param validFromMs - Optional earliest valid timestamp in milliseconds since the Unix
+     * epoch.
+     * @param validUntilMs - Optional latest valid timestamp in milliseconds since the Unix epoch.
      * @param {string | null} [issued_to]
      * @param {bigint | null} [valid_from_ms]
      * @param {bigint | null} [valid_until_ms]
@@ -1201,6 +1694,8 @@ export class CapabilityIssueOptions {
         return this;
     }
     /**
+     * Address that should own the issued capability. When `null`, the capability is transferred
+     * to the caller.
      * @returns {string | undefined}
      */
     get issuedTo() {
@@ -1213,6 +1708,8 @@ export class CapabilityIssueOptions {
         return v1;
     }
     /**
+     * Earliest millisecond timestamp (since the Unix epoch) at which the capability becomes
+     * valid. When `null`, the capability is valid from its creation time.
      * @returns {bigint | undefined}
      */
     get validFromMs() {
@@ -1220,6 +1717,8 @@ export class CapabilityIssueOptions {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Latest millisecond timestamp (since the Unix epoch) at which the capability is still
+     * valid. When `null`, the capability does not expire.
      * @returns {bigint | undefined}
      */
     get validUntilMs() {
@@ -1227,6 +1726,8 @@ export class CapabilityIssueOptions {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Address that should own the issued capability. When `null`, the capability is transferred
+     * to the caller.
      * @param {string | null} [arg0]
      */
     set issuedTo(arg0) {
@@ -1235,12 +1736,16 @@ export class CapabilityIssueOptions {
         wasm.__wbg_set_capabilityissueoptions_issuedTo(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Earliest millisecond timestamp (since the Unix epoch) at which the capability becomes
+     * valid. When `null`, the capability is valid from its creation time.
      * @param {bigint | null} [arg0]
      */
     set validFromMs(arg0) {
         wasm.__wbg_set_capability_validFrom(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
     }
     /**
+     * Latest millisecond timestamp (since the Unix epoch) at which the capability is still
+     * valid. When `null`, the capability does not expire.
      * @param {bigint | null} [arg0]
      */
     set validUntilMs(arg0) {
@@ -1249,6 +1754,9 @@ export class CapabilityIssueOptions {
 }
 if (Symbol.dispose) CapabilityIssueOptions.prototype[Symbol.dispose] = CapabilityIssueOptions.prototype.free;
 
+/**
+ * Event payload emitted when a capability is issued.
+ */
 export class CapabilityIssued {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1281,6 +1789,7 @@ export class CapabilityIssued {
         wasm.__wbg_capabilityissued_free(ptr, 0);
     }
     /**
+     * Newly created capability object ID.
      * @returns {string}
      */
     get capabilityId() {
@@ -1296,6 +1805,7 @@ export class CapabilityIssued {
         }
     }
     /**
+     * Address bound to the capability, if one was assigned at issue time.
      * @returns {string | undefined}
      */
     get issuedTo() {
@@ -1308,6 +1818,7 @@ export class CapabilityIssued {
         return v1;
     }
     /**
+     * Role granted by the capability.
      * @returns {string}
      */
     get role() {
@@ -1323,6 +1834,7 @@ export class CapabilityIssued {
         }
     }
     /**
+     * Trail object ID protected by the capability.
      * @returns {string}
      */
     get targetKey() {
@@ -1338,6 +1850,8 @@ export class CapabilityIssued {
         }
     }
     /**
+     * Earliest millisecond timestamp (since the Unix epoch, inclusive) at which the capability
+     * becomes valid. `null` when no lower bound was set.
      * @returns {bigint | undefined}
      */
     get validFrom() {
@@ -1345,6 +1859,8 @@ export class CapabilityIssued {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Latest millisecond timestamp (since the Unix epoch, inclusive) at which the capability is
+     * still valid. `null` when no expiry was set.
      * @returns {bigint | undefined}
      */
     get validUntil() {
@@ -1352,6 +1868,7 @@ export class CapabilityIssued {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Newly created capability object ID.
      * @param {string} arg0
      */
     set capabilityId(arg0) {
@@ -1360,6 +1877,7 @@ export class CapabilityIssued {
         wasm.__wbg_set_capability_targetKey(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Address bound to the capability, if one was assigned at issue time.
      * @param {string | null} [arg0]
      */
     set issuedTo(arg0) {
@@ -1368,6 +1886,7 @@ export class CapabilityIssued {
         wasm.__wbg_set_capability_issuedTo(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Role granted by the capability.
      * @param {string} arg0
      */
     set role(arg0) {
@@ -1376,6 +1895,7 @@ export class CapabilityIssued {
         wasm.__wbg_set_capability_role(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Trail object ID protected by the capability.
      * @param {string} arg0
      */
     set targetKey(arg0) {
@@ -1384,12 +1904,16 @@ export class CapabilityIssued {
         wasm.__wbg_set_capability_id(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Earliest millisecond timestamp (since the Unix epoch, inclusive) at which the capability
+     * becomes valid. `null` when no lower bound was set.
      * @param {bigint | null} [arg0]
      */
     set validFrom(arg0) {
         wasm.__wbg_set_capability_validFrom(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
     }
     /**
+     * Latest millisecond timestamp (since the Unix epoch, inclusive) at which the capability is
+     * still valid. `null` when no expiry was set.
      * @param {bigint | null} [arg0]
      */
     set validUntil(arg0) {
@@ -1398,6 +1922,9 @@ export class CapabilityIssued {
 }
 if (Symbol.dispose) CapabilityIssued.prototype[Symbol.dispose] = CapabilityIssued.prototype.free;
 
+/**
+ * Event payload emitted when a capability is revoked.
+ */
 export class CapabilityRevoked {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1427,6 +1954,7 @@ export class CapabilityRevoked {
         wasm.__wbg_capabilityrevoked_free(ptr, 0);
     }
     /**
+     * Revoked capability object ID.
      * @returns {string}
      */
     get capabilityId() {
@@ -1442,6 +1970,7 @@ export class CapabilityRevoked {
         }
     }
     /**
+     * Trail object ID protected by the capability.
      * @returns {string}
      */
     get targetKey() {
@@ -1457,6 +1986,10 @@ export class CapabilityRevoked {
         }
     }
     /**
+     * Millisecond timestamp retained for denylist cleanup.
+     *
+     * `0` when the capability had no expiry — denylist entries with `validUntil == 0` are kept
+     * indefinitely.
      * @returns {bigint}
      */
     get validUntil() {
@@ -1464,6 +1997,7 @@ export class CapabilityRevoked {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Revoked capability object ID.
      * @param {string} arg0
      */
     set capabilityId(arg0) {
@@ -1472,6 +2006,7 @@ export class CapabilityRevoked {
         wasm.__wbg_set_audittrailcreated_creator(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Trail object ID protected by the capability.
      * @param {string} arg0
      */
     set targetKey(arg0) {
@@ -1480,6 +2015,10 @@ export class CapabilityRevoked {
         wasm.__wbg_set_audittrailcreated_trailId(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Millisecond timestamp retained for denylist cleanup.
+     *
+     * `0` when the capability had no expiry — denylist entries with `validUntil == 0` are kept
+     * indefinitely.
      * @param {bigint} arg0
      */
     set validUntil(arg0) {
@@ -1488,6 +2027,18 @@ export class CapabilityRevoked {
 }
 if (Symbol.dispose) CapabilityRevoked.prototype[Symbol.dispose] = CapabilityRevoked.prototype.free;
 
+/**
+ * Transaction wrapper for cleaning up expired revoked-capability entries.
+ *
+ * @remarks
+ * Only prunes denylist entries whose stored `validUntil` is non-zero and strictly less than the
+ * current clock time. Entries with `validUntil == 0` are kept indefinitely. Does not revoke
+ * additional capabilities.
+ *
+ * Requires the {@link Permission.RevokeCapabilities} permission.
+ *
+ * Emits a {@link RevokedCapabilitiesCleanedUp} event on success.
+ */
 export class CleanupRevokedCapabilities {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1514,10 +2065,19 @@ export class CleanupRevokedCapabilities {
         wasm.__wbg_cleanuprevokedcapabilities_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link RevokedCapabilitiesCleanedUp} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
-     * @returns {Promise<Empty>}
+     * @returns {Promise<RevokedCapabilitiesCleanedUp>}
      */
     applyWithEvents(wasm_effects, wasm_events, client) {
         const ptr = this.__destroy_into_raw();
@@ -1525,6 +2085,14 @@ export class CleanupRevokedCapabilities {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -1535,6 +2103,17 @@ export class CleanupRevokedCapabilities {
 }
 if (Symbol.dispose) CleanupRevokedCapabilities.prototype[Symbol.dispose] = CleanupRevokedCapabilities.prototype.free;
 
+/**
+ * Transaction wrapper for creating a role.
+ *
+ * @remarks
+ * Any `roleTags` supplied must already exist in the trail's record-tag registry; the on-chain
+ * call aborts otherwise.
+ *
+ * Requires the {@link Permission.AddRoles} permission.
+ *
+ * Emits a {@link RoleCreated} event on success.
+ */
 export class CreateRole {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1561,6 +2140,15 @@ export class CreateRole {
         wasm.__wbg_createrole_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link RoleCreated} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -1572,6 +2160,14 @@ export class CreateRole {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -1582,6 +2178,17 @@ export class CreateRole {
 }
 if (Symbol.dispose) CreateRole.prototype[Symbol.dispose] = CreateRole.prototype.free;
 
+/**
+ * Transaction wrapper for trail creation.
+ *
+ * @remarks
+ * On execution the audit-trail package shares the new trail object, seeds the reserved
+ * {@link RoleMap.initialAdminRoleName | Admin} role, transfers a fresh initial-admin capability to
+ * the admin address, and optionally stores the initial record at sequence number `0`, validating
+ * its tag against the registry.
+ *
+ * Emits an {@link AuditTrailCreated} event on success.
+ */
 export class CreateTrail {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1608,6 +2215,15 @@ export class CreateTrail {
         wasm.__wbg_createtrail_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and then fetches the created trail object.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used to fetch the new trail object.
+     *
+     * @returns The on-chain {@link OnChainAuditTrail} created by the transaction.
+     *
+     * @throws When the expected event is missing or the trail cannot be fetched.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -1619,6 +2235,14 @@ export class CreateTrail {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -1627,6 +2251,9 @@ export class CreateTrail {
         return ret;
     }
     /**
+     * Creates a transaction wrapper from an {@link AuditTrailBuilder}.
+     *
+     * @param builder - Fully configured {@link AuditTrailBuilder}.
      * @param {AuditTrailBuilder} builder
      */
     constructor(builder) {
@@ -1640,6 +2267,14 @@ export class CreateTrail {
 }
 if (Symbol.dispose) CreateTrail.prototype[Symbol.dispose] = CreateTrail.prototype.free;
 
+/**
+ * Audit-trail record payload.
+ *
+ * @remarks
+ * Holds either a UTF-8 string or a raw byte sequence. Use {@link Data.fromString} or
+ * {@link Data.fromBytes} to construct an instance, and {@link Data.toString} or
+ * {@link Data.toBytes} to extract the payload as the desired representation.
+ */
 export class Data {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1667,6 +2302,11 @@ export class Data {
         wasm.__wbg_data_free(ptr, 0);
     }
     /**
+     * Creates a binary payload.
+     *
+     * @param data - Raw bytes to wrap.
+     *
+     * @returns A {@link Data} carrying `data` as bytes.
      * @param {Uint8Array} data
      * @returns {Data}
      */
@@ -1675,6 +2315,11 @@ export class Data {
         return Data.__wrap(ret);
     }
     /**
+     * Creates a text payload.
+     *
+     * @param data - UTF-8 string to wrap.
+     *
+     * @returns A {@link Data} carrying `data` as text.
      * @param {string} data
      * @returns {Data}
      */
@@ -1685,6 +2330,12 @@ export class Data {
         return Data.__wrap(ret);
     }
     /**
+     * Returns the payload as raw bytes.
+     *
+     * @remarks
+     * Text payloads are encoded as UTF-8.
+     *
+     * @returns A byte view of the payload.
      * @returns {Uint8Array}
      */
     toBytes() {
@@ -1694,6 +2345,13 @@ export class Data {
         return v1;
     }
     /**
+     * Returns the payload as a string.
+     *
+     * @remarks
+     * Byte payloads are decoded with lossy UTF-8 conversion (invalid sequences become the U+FFFD
+     * replacement character).
+     *
+     * @returns A string view of the payload.
      * @returns {string}
      */
     toString() {
@@ -1709,6 +2367,9 @@ export class Data {
         }
     }
     /**
+     * Returns the underlying payload in its original representation.
+     *
+     * @returns A `string` for text payloads or a `Uint8Array` for byte payloads.
      * @returns {any}
      */
     get value() {
@@ -1749,6 +2410,17 @@ export class DefaultHttpClient {
 }
 if (Symbol.dispose) DefaultHttpClient.prototype[Symbol.dispose] = DefaultHttpClient.prototype.free;
 
+/**
+ * Transaction wrapper for deleting a trail.
+ *
+ * @remarks
+ * Aborts on-chain when records still exist or while the configured trail-delete time lock is
+ * active.
+ *
+ * Requires the {@link Permission.DeleteAuditTrail} permission.
+ *
+ * Emits an {@link AuditTrailDeleted} event on success.
+ */
 export class DeleteAuditTrail {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1775,6 +2447,15 @@ export class DeleteAuditTrail {
         wasm.__wbg_deleteaudittrail_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link AuditTrailDeleted} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -1786,6 +2467,14 @@ export class DeleteAuditTrail {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -1796,6 +2485,18 @@ export class DeleteAuditTrail {
 }
 if (Symbol.dispose) DeleteAuditTrail.prototype[Symbol.dispose] = DeleteAuditTrail.prototype.free;
 
+/**
+ * Transaction wrapper for deleting a single record.
+ *
+ * @remarks
+ * Aborts on-chain when no record exists at the supplied sequence number or while the
+ * delete-record window still protects it. Tag-aware authorization additionally applies when the
+ * record carries a tag.
+ *
+ * Requires the {@link Permission.DeleteRecord} permission.
+ *
+ * Emits a {@link RecordDeleted} event on success.
+ */
 export class DeleteRecord {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1822,6 +2523,15 @@ export class DeleteRecord {
         wasm.__wbg_deleterecord_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link RecordDeleted} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -1833,6 +2543,14 @@ export class DeleteRecord {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -1843,6 +2561,17 @@ export class DeleteRecord {
 }
 if (Symbol.dispose) DeleteRecord.prototype[Symbol.dispose] = DeleteRecord.prototype.free;
 
+/**
+ * Transaction wrapper for deleting records in batch form.
+ *
+ * @remarks
+ * Walks the trail from the front and silently skips records still inside the delete-record
+ * window. Tag-aware authorization applies to every record actually deleted.
+ *
+ * Requires the {@link Permission.DeleteAllRecords} permission.
+ *
+ * Emits one {@link RecordDeleted} event per deletion.
+ */
 export class DeleteRecordsBatch {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1869,10 +2598,20 @@ export class DeleteRecordsBatch {
         wasm.__wbg_deleterecordsbatch_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Sequence numbers of the records deleted in this batch, in deletion order — at
+     * most the requested limit, possibly fewer.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
-     * @returns {Promise<bigint>}
+     * @returns {Promise<BigUint64Array>}
      */
     applyWithEvents(wasm_effects, wasm_events, client) {
         const ptr = this.__destroy_into_raw();
@@ -1880,6 +2619,14 @@ export class DeleteRecordsBatch {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -1890,6 +2637,16 @@ export class DeleteRecordsBatch {
 }
 if (Symbol.dispose) DeleteRecordsBatch.prototype[Symbol.dispose] = DeleteRecordsBatch.prototype.free;
 
+/**
+ * Transaction wrapper for deleting a role.
+ *
+ * @remarks
+ * The reserved initial-admin role (`"Admin"`) cannot be deleted.
+ *
+ * Requires the {@link Permission.DeleteRoles} permission.
+ *
+ * Emits a {@link RoleDeleted} event on success.
+ */
 export class DeleteRole {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1916,6 +2673,15 @@ export class DeleteRole {
         wasm.__wbg_deleterole_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link RoleDeleted} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -1927,6 +2693,14 @@ export class DeleteRole {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -1937,6 +2711,17 @@ export class DeleteRole {
 }
 if (Symbol.dispose) DeleteRole.prototype[Symbol.dispose] = DeleteRole.prototype.free;
 
+/**
+ * Transaction wrapper for destroying a capability.
+ *
+ * @remarks
+ * Consumes the owned capability object. This path is for ordinary capabilities only —
+ * initial-admin capabilities must use {@link DestroyInitialAdminCapability}.
+ *
+ * Requires the {@link Permission.RevokeCapabilities} permission.
+ *
+ * Emits a {@link CapabilityDestroyed} event on success.
+ */
 export class DestroyCapability {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -1963,6 +2748,15 @@ export class DestroyCapability {
         wasm.__wbg_destroycapability_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link CapabilityDestroyed} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -1974,6 +2768,14 @@ export class DestroyCapability {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -1984,6 +2786,16 @@ export class DestroyCapability {
 }
 if (Symbol.dispose) DestroyCapability.prototype[Symbol.dispose] = DestroyCapability.prototype.free;
 
+/**
+ * Transaction wrapper for destroying an initial-admin capability.
+ *
+ * @remarks
+ * Self-service: the holder consumes their own initial-admin capability without presenting another
+ * authorization capability. **Warning:** if every initial-admin capability is destroyed (and none
+ * was issued separately), the trail is permanently sealed with no admin access.
+ *
+ * Emits a {@link CapabilityDestroyed} event on success.
+ */
 export class DestroyInitialAdminCapability {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2010,6 +2822,15 @@ export class DestroyInitialAdminCapability {
         wasm.__wbg_destroyinitialadmincapability_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link CapabilityDestroyed} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -2021,6 +2842,14 @@ export class DestroyInitialAdminCapability {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -2031,6 +2860,9 @@ export class DestroyInitialAdminCapability {
 }
 if (Symbol.dispose) DestroyInitialAdminCapability.prototype[Symbol.dispose] = DestroyInitialAdminCapability.prototype.free;
 
+/**
+ * Placeholder type used as the resolved value of transactions that carry no payload.
+ */
 export class Empty {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2120,6 +2952,13 @@ export class GasStationParams {
 }
 if (Symbol.dispose) GasStationParams.prototype[Symbol.dispose] = GasStationParams.prototype.free;
 
+/**
+ * Immutable trail metadata.
+ *
+ * @remarks
+ * Stored once on the trail object at creation and exposed read-only thereafter. Use
+ * {@link OnChainAuditTrail.updatableMetadata} for the mutable counterpart.
+ */
 export class ImmutableMetadata {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2148,6 +2987,7 @@ export class ImmutableMetadata {
         wasm.__wbg_immutablemetadata_free(ptr, 0);
     }
     /**
+     * Optional human-readable description.
      * @returns {string | undefined}
      */
     get description() {
@@ -2160,6 +3000,7 @@ export class ImmutableMetadata {
         return v1;
     }
     /**
+     * Human-readable trail name.
      * @returns {string}
      */
     get name() {
@@ -2175,6 +3016,7 @@ export class ImmutableMetadata {
         }
     }
     /**
+     * Optional human-readable description.
      * @param {string | null} [arg0]
      */
     set description(arg0) {
@@ -2183,6 +3025,7 @@ export class ImmutableMetadata {
         wasm.__wbg_set_immutablemetadata_description(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Human-readable trail name.
      * @param {string} arg0
      */
     set name(arg0) {
@@ -2193,6 +3036,19 @@ export class ImmutableMetadata {
 }
 if (Symbol.dispose) ImmutableMetadata.prototype[Symbol.dispose] = ImmutableMetadata.prototype.free;
 
+/**
+ * Transaction wrapper for issuing a capability.
+ *
+ * @remarks
+ * Mints a new {@link Capability} for the role and transfers it to the configured recipient (or
+ * the caller when none was set). The validity window configured via
+ * {@link CapabilityIssueOptions} is enforced when the capability is later presented for
+ * authorization.
+ *
+ * Requires the {@link Permission.AddCapabilities} permission.
+ *
+ * Emits a {@link CapabilityIssued} event on success.
+ */
 export class IssueCapability {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2219,6 +3075,15 @@ export class IssueCapability {
         wasm.__wbg_issuecapability_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link CapabilityIssued} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -2230,6 +3095,14 @@ export class IssueCapability {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -2240,6 +3113,9 @@ export class IssueCapability {
 }
 if (Symbol.dispose) IssueCapability.prototype[Symbol.dispose] = IssueCapability.prototype.free;
 
+/**
+ * Linked-table metadata for record storage.
+ */
 export class LinkedTable {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2270,6 +3146,7 @@ export class LinkedTable {
         wasm.__wbg_linkedtable_free(ptr, 0);
     }
     /**
+     * Sequence number of the first entry, if any.
      * @returns {bigint | undefined}
      */
     get head() {
@@ -2277,6 +3154,7 @@ export class LinkedTable {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Linked-table object ID.
      * @returns {string}
      */
     get id() {
@@ -2292,6 +3170,7 @@ export class LinkedTable {
         }
     }
     /**
+     * Declared number of entries in the table.
      * @returns {bigint}
      */
     get size() {
@@ -2299,6 +3178,7 @@ export class LinkedTable {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Sequence number of the last entry, if any.
      * @returns {bigint | undefined}
      */
     get tail() {
@@ -2306,12 +3186,14 @@ export class LinkedTable {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Sequence number of the first entry, if any.
      * @param {bigint | null} [arg0]
      */
     set head(arg0) {
         wasm.__wbg_set_capability_validFrom(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
     }
     /**
+     * Linked-table object ID.
      * @param {string} arg0
      */
     set id(arg0) {
@@ -2320,12 +3202,14 @@ export class LinkedTable {
         wasm.__wbg_set_linkedtable_id(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Declared number of entries in the table.
      * @param {bigint} arg0
      */
     set size(arg0) {
         wasm.__wbg_set_linkedtable_size(this.__wbg_ptr, arg0);
     }
     /**
+     * Sequence number of the last entry, if any.
      * @param {bigint | null} [arg0]
      */
     set tail(arg0) {
@@ -2334,6 +3218,14 @@ export class LinkedTable {
 }
 if (Symbol.dispose) LinkedTable.prototype[Symbol.dispose] = LinkedTable.prototype.free;
 
+/**
+ * Full locking configuration.
+ *
+ * @remarks
+ * Combines three independent rules: a per-record delete window, a trail-delete time lock, and a
+ * write-time lock. The trail-delete lock must not be {@link TimeLock.withUntilDestroyed}; trail
+ * creation and locking updates that violate this invariant abort on-chain.
+ */
 export class LockingConfig {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2363,6 +3255,9 @@ export class LockingConfig {
         wasm.__wbg_lockingconfig_free(ptr, 0);
     }
     /**
+     * Delete-window policy applied to individual records.
+     *
+     * Records inside the window are locked against deletion.
      * @returns {LockingWindow}
      */
     get deleteRecordWindow() {
@@ -2370,6 +3265,10 @@ export class LockingConfig {
         return LockingWindow.__wrap(ret);
     }
     /**
+     * Time lock that gates deletion of the entire trail.
+     *
+     * Must not be {@link TimeLock.withUntilDestroyed}; trail creation and locking updates that
+     * violate this invariant abort on-chain.
      * @returns {TimeLock}
      */
     get deleteTrailLock() {
@@ -2377,6 +3276,7 @@ export class LockingConfig {
         return TimeLock.__wrap(ret);
     }
     /**
+     * Time lock that gates record writes (`addRecord`).
      * @returns {TimeLock}
      */
     get writeLock() {
@@ -2384,6 +3284,13 @@ export class LockingConfig {
         return TimeLock.__wrap(ret);
     }
     /**
+     * Creates a locking configuration.
+     *
+     * @param deleteRecordWindow - {@link LockingWindow} that controls when individual records may
+     * be deleted.
+     * @param deleteTrailLock - {@link TimeLock} that controls when the trail itself may be
+     * deleted.
+     * @param writeLock - {@link TimeLock} that controls when records may be appended.
      * @param {LockingWindow} delete_record_window
      * @param {TimeLock} delete_trail_lock
      * @param {TimeLock} write_lock
@@ -2401,6 +3308,9 @@ export class LockingConfig {
         return this;
     }
     /**
+     * Delete-window policy applied to individual records.
+     *
+     * Records inside the window are locked against deletion.
      * @param {LockingWindow} arg0
      */
     set deleteRecordWindow(arg0) {
@@ -2409,6 +3319,10 @@ export class LockingConfig {
         wasm.__wbg_set_lockingconfig_deleteRecordWindow(this.__wbg_ptr, ptr0);
     }
     /**
+     * Time lock that gates deletion of the entire trail.
+     *
+     * Must not be {@link TimeLock.withUntilDestroyed}; trail creation and locking updates that
+     * violate this invariant abort on-chain.
      * @param {TimeLock} arg0
      */
     set deleteTrailLock(arg0) {
@@ -2417,6 +3331,7 @@ export class LockingConfig {
         wasm.__wbg_set_lockingconfig_deleteTrailLock(this.__wbg_ptr, ptr0);
     }
     /**
+     * Time lock that gates record writes (`addRecord`).
      * @param {TimeLock} arg0
      */
     set writeLock(arg0) {
@@ -2427,6 +3342,15 @@ export class LockingConfig {
 }
 if (Symbol.dispose) LockingConfig.prototype[Symbol.dispose] = LockingConfig.prototype.free;
 
+/**
+ * Delete-window definition used in the trail's {@link LockingConfig}.
+ *
+ * @remarks
+ * A window describes the period during which a record stays *locked against deletion*: time-based
+ * windows lock a record while its age is below the configured number of seconds; count-based
+ * windows lock a record while it is among the most recent N records. Records outside the window
+ * may be deleted, subject to remaining permission and tag checks.
+ */
 export class LockingWindow {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2455,6 +3379,10 @@ export class LockingWindow {
         wasm.__wbg_lockingwindow_free(ptr, 0);
     }
     /**
+     * Returns the window argument for parameterized variants.
+     *
+     * @returns The numeric argument for `TimeBased`/`CountBased` variants, or `undefined`
+     * otherwise.
      * @returns {any}
      */
     get args() {
@@ -2462,6 +3390,9 @@ export class LockingWindow {
         return ret;
     }
     /**
+     * Returns the window variant.
+     *
+     * @returns The {@link LockingWindowType} discriminant for this window.
      * @returns {LockingWindowType}
      */
     get type() {
@@ -2469,6 +3400,11 @@ export class LockingWindow {
         return ret;
     }
     /**
+     * Creates a count-based delete window.
+     *
+     * @param count - Number of most recent records that stay locked against deletion.
+     *
+     * @returns A window that locks the `count` most recent records.
      * @param {bigint} count
      * @returns {LockingWindow}
      */
@@ -2477,6 +3413,9 @@ export class LockingWindow {
         return LockingWindow.__wrap(ret);
     }
     /**
+     * Creates a disabled delete window.
+     *
+     * @returns A window that does not lock records against deletion.
      * @returns {LockingWindow}
      */
     static withNone() {
@@ -2484,6 +3423,12 @@ export class LockingWindow {
         return LockingWindow.__wrap(ret);
     }
     /**
+     * Creates a time-based delete window.
+     *
+     * @param seconds - Maximum record age, in seconds, for which the record stays locked against
+     * deletion.
+     *
+     * @returns A window that locks records younger than `seconds`.
      * @param {bigint} seconds
      * @returns {LockingWindow}
      */
@@ -2495,14 +3440,33 @@ export class LockingWindow {
 if (Symbol.dispose) LockingWindow.prototype[Symbol.dispose] = LockingWindow.prototype.free;
 
 /**
+ * Discriminant for the shape stored inside {@link LockingWindow}.
  * @enum {0 | 1 | 2}
  */
 export const LockingWindowType = Object.freeze({
+    /**
+     * No delete window is enforced; records may be deleted at any time.
+     */
     None: 0, "0": "None",
+    /**
+     * The window locks records while their age is below a configured number of seconds.
+     */
     TimeBased: 1, "1": "TimeBased",
+    /**
+     * The window locks records while they are among the most recent N records.
+     */
     CountBased: 2, "2": "CountBased",
 });
 
+/**
+ * Transaction wrapper for trail migration.
+ *
+ * @remarks
+ * Succeeds only when the on-chain trail's package version is strictly less than the package
+ * version this binding targets.
+ *
+ * Requires the {@link Permission.Migrate} permission.
+ */
 export class Migrate {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2529,6 +3493,13 @@ export class Migrate {
         wasm.__wbg_migrate_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -2540,6 +3511,14 @@ export class Migrate {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -2550,6 +3529,9 @@ export class Migrate {
 }
 if (Symbol.dispose) Migrate.prototype[Symbol.dispose] = Migrate.prototype.free;
 
+/**
+ * Linked-table metadata keyed by object IDs.
+ */
 export class ObjectIdLinkedTable {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2580,6 +3562,7 @@ export class ObjectIdLinkedTable {
         wasm.__wbg_objectidlinkedtable_free(ptr, 0);
     }
     /**
+     * Object ID of the first entry, if any.
      * @returns {string | undefined}
      */
     get head() {
@@ -2592,6 +3575,7 @@ export class ObjectIdLinkedTable {
         return v1;
     }
     /**
+     * Linked-table object ID.
      * @returns {string}
      */
     get id() {
@@ -2607,6 +3591,7 @@ export class ObjectIdLinkedTable {
         }
     }
     /**
+     * Declared number of entries in the table.
      * @returns {bigint}
      */
     get size() {
@@ -2614,6 +3599,7 @@ export class ObjectIdLinkedTable {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Object ID of the last entry, if any.
      * @returns {string | undefined}
      */
     get tail() {
@@ -2626,6 +3612,7 @@ export class ObjectIdLinkedTable {
         return v1;
     }
     /**
+     * Object ID of the first entry, if any.
      * @param {string | null} [arg0]
      */
     set head(arg0) {
@@ -2634,6 +3621,7 @@ export class ObjectIdLinkedTable {
         wasm.__wbg_set_objectidlinkedtable_head(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Linked-table object ID.
      * @param {string} arg0
      */
     set id(arg0) {
@@ -2642,12 +3630,14 @@ export class ObjectIdLinkedTable {
         wasm.__wbg_set_audittrailcreated_trailId(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Declared number of entries in the table.
      * @param {bigint} arg0
      */
     set size(arg0) {
         wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Object ID of the last entry, if any.
      * @param {string | null} [arg0]
      */
     set tail(arg0) {
@@ -2658,6 +3648,16 @@ export class ObjectIdLinkedTable {
 }
 if (Symbol.dispose) ObjectIdLinkedTable.prototype[Symbol.dispose] = ObjectIdLinkedTable.prototype.free;
 
+/**
+ * Read-only view of an on-chain audit trail.
+ *
+ * @remarks
+ * The trail is a *shared*, tamper-evident object that maintains an ordered sequence of records.
+ * Each record is assigned a unique, auto-incrementing sequence number that is never reused (the
+ * counter does not decrement on deletion). Access is governed by capability-based RBAC: every
+ * mutating call must present a {@link Capability} bound to a role whose permissions cover the
+ * operation.
+ */
 export class OnChainAuditTrail {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2695,6 +3695,9 @@ export class OnChainAuditTrail {
         wasm.__wbg_onchainaudittrail_free(ptr, 0);
     }
     /**
+     * Returns the creation timestamp in milliseconds since the Unix epoch.
+     *
+     * @returns Creation timestamp in milliseconds.
      * @returns {bigint}
      */
     get createdAt() {
@@ -2702,6 +3705,9 @@ export class OnChainAuditTrail {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Returns the address that created this trail.
+     *
+     * @returns Stringified IOTA address of the trail creator.
      * @returns {string}
      */
     get creator() {
@@ -2717,6 +3723,9 @@ export class OnChainAuditTrail {
         }
     }
     /**
+     * Returns the trail object ID.
+     *
+     * @returns Stringified object ID of this trail.
      * @returns {string}
      */
     get id() {
@@ -2732,6 +3741,9 @@ export class OnChainAuditTrail {
         }
     }
     /**
+     * Returns metadata fixed at creation time, when present.
+     *
+     * @returns The trail's {@link ImmutableMetadata}, or `null` when none was set.
      * @returns {ImmutableMetadata | undefined}
      */
     get immutableMetadata() {
@@ -2739,6 +3751,10 @@ export class OnChainAuditTrail {
         return ret === 0 ? undefined : ImmutableMetadata.__wrap(ret);
     }
     /**
+     * Returns the active locking configuration that governs record deletion, trail deletion, and
+     * record writes.
+     *
+     * @returns Active {@link LockingConfig} for the trail.
      * @returns {LockingConfig}
      */
     get lockingConfig() {
@@ -2746,6 +3762,13 @@ export class OnChainAuditTrail {
         return LockingConfig.__wrap(ret);
     }
     /**
+     * Returns the linked-table metadata for record storage.
+     *
+     * @remarks
+     * Returns table size and head/tail sequence numbers; record contents must be loaded via
+     * {@link TrailRecords}.
+     *
+     * @returns {@link LinkedTable} metadata for the record table.
      * @returns {LinkedTable}
      */
     get records() {
@@ -2753,6 +3776,10 @@ export class OnChainAuditTrail {
         return LinkedTable.__wrap(ret);
     }
     /**
+     * Returns the trail's role definitions, the revoked-capability denylist, and the permissions
+     * required to administer roles and capabilities.
+     *
+     * @returns The trail's {@link RoleMap}.
      * @returns {RoleMap}
      */
     get roles() {
@@ -2760,6 +3787,13 @@ export class OnChainAuditTrail {
         return RoleMap.__wrap(ret);
     }
     /**
+     * Returns the next sequence number that will be assigned to a new record.
+     *
+     * @remarks
+     * This is a monotonic counter that never decrements, even after records are deleted, so
+     * existing sequence numbers remain unique for the lifetime of the trail.
+     *
+     * @returns Sequence number that the next added record will receive.
      * @returns {bigint}
      */
     get sequenceNumber() {
@@ -2767,6 +3801,10 @@ export class OnChainAuditTrail {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Returns the canonical list of tags that may be attached to records in this trail, together
+     * with their combined usage counts.
+     *
+     * @returns Tag entries sorted alphabetically by tag name.
      * @returns {RecordTagEntry[]}
      */
     get tags() {
@@ -2776,6 +3814,10 @@ export class OnChainAuditTrail {
         return v1;
     }
     /**
+     * Returns metadata that holders of {@link Permission.UpdateMetadata} can change after
+     * creation, when present.
+     *
+     * @returns Current value of `updatableMetadata`, or `null` when the field is unset.
      * @returns {string | undefined}
      */
     get updatableMetadata() {
@@ -2788,6 +3830,13 @@ export class OnChainAuditTrail {
         return v1;
     }
     /**
+     * Returns the on-chain package version of the trail object.
+     *
+     * @remarks
+     * Use {@link AuditTrailHandle.migrate} after a package upgrade if this lags behind the SDK's
+     * expected version.
+     *
+     * @returns Stored package version of the trail object.
      * @returns {bigint}
      */
     get version() {
@@ -2797,6 +3846,17 @@ export class OnChainAuditTrail {
 }
 if (Symbol.dispose) OnChainAuditTrail.prototype[Symbol.dispose] = OnChainAuditTrail.prototype.free;
 
+/**
+ * Package-ID overrides used when targeting custom audit-trail deployments.
+ *
+ * @remarks
+ * Pass an instance of this type to
+ * {@link AuditTrailClientReadOnly.createWithPackageOverrides} or
+ * {@link AuditTrailClient.createFromIotaClientWithPackageOverrides} when the connected network
+ * hosts the audit-trail package — and optionally the `tf_components` package — at addresses that
+ * are not part of the SDK's built-in registry. Leave a field unset to fall back to the registry
+ * lookup for that package.
+ */
 export class PackageOverrides {
     toJSON() {
         return {
@@ -2818,6 +3878,7 @@ export class PackageOverrides {
         wasm.__wbg_packageoverrides_free(ptr, 0);
     }
     /**
+     * Override for the audit-trail package ID.
      * @returns {string | undefined}
      */
     get auditTrailPackageId() {
@@ -2830,6 +3891,7 @@ export class PackageOverrides {
         return v1;
     }
     /**
+     * Override for the `tf_components` package ID.
      * @returns {string | undefined}
      */
     get tfComponentsPackageId() {
@@ -2842,6 +3904,12 @@ export class PackageOverrides {
         return v1;
     }
     /**
+     * Creates package overrides for custom deployments.
+     *
+     * @param auditTrailPackageId - Optional audit-trail package ID to use instead of the registry
+     * entry.
+     * @param tfComponentsPackageId - Optional `tf_components` package ID to use instead of the
+     * registry entry.
      * @param {string | null} [audit_trail_package_id]
      * @param {string | null} [tf_components_package_id]
      */
@@ -2856,6 +3924,7 @@ export class PackageOverrides {
         return this;
     }
     /**
+     * Override for the audit-trail package ID.
      * @param {string | null} [arg0]
      */
     set auditTrailPackageId(arg0) {
@@ -2864,6 +3933,7 @@ export class PackageOverrides {
         wasm.__wbg_set_packageoverrides_auditTrailPackageId(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Override for the `tf_components` package ID.
      * @param {string | null} [arg0]
      */
     set tfComponentsPackageId(arg0) {
@@ -2874,6 +3944,9 @@ export class PackageOverrides {
 }
 if (Symbol.dispose) PackageOverrides.prototype[Symbol.dispose] = PackageOverrides.prototype.free;
 
+/**
+ * One page of records returned by {@link TrailRecords.listPage}.
+ */
 export class PaginatedRecord {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -2903,6 +3976,7 @@ export class PaginatedRecord {
         wasm.__wbg_paginatedrecord_free(ptr, 0);
     }
     /**
+     * Indicates whether another page may be available.
      * @returns {boolean}
      */
     get hasNextPage() {
@@ -2910,6 +3984,7 @@ export class PaginatedRecord {
         return ret !== 0;
     }
     /**
+     * Cursor to pass to the next {@link TrailRecords.listPage} call.
      * @returns {bigint | undefined}
      */
     get nextCursor() {
@@ -2917,6 +3992,7 @@ export class PaginatedRecord {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Records included in the current page, ordered by sequence number.
      * @returns {Record[]}
      */
     get records() {
@@ -2926,18 +4002,21 @@ export class PaginatedRecord {
         return v1;
     }
     /**
+     * Indicates whether another page may be available.
      * @param {boolean} arg0
      */
     set hasNextPage(arg0) {
         wasm.__wbg_set_paginatedrecord_hasNextPage(this.__wbg_ptr, arg0);
     }
     /**
+     * Cursor to pass to the next {@link TrailRecords.listPage} call.
      * @param {bigint | null} [arg0]
      */
     set nextCursor(arg0) {
         wasm.__wbg_set_capability_validFrom(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
     }
     /**
+     * Records included in the current page, ordered by sequence number.
      * @param {Record[]} arg0
      */
     set records(arg0) {
@@ -2949,30 +4028,96 @@ export class PaginatedRecord {
 if (Symbol.dispose) PaginatedRecord.prototype[Symbol.dispose] = PaginatedRecord.prototype.free;
 
 /**
+ * Permission variants enumerated by the audit trail.
+ *
+ * @remarks
+ * Each variant authorizes one operation on a trail. Variants are grouped by the proposed role
+ * that typically owns them (`Admin`, `RecordAdmin`, `LockingAdmin`, `RoleAdmin`, `CapAdmin`,
+ * `MetadataAdmin`, `TagAdmin`); see {@link PermissionSet} for the recommended sets.
  * @enum {0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18}
  */
 export const Permission = Object.freeze({
+    /**
+     * Authorizes deleting the trail itself.
+     */
     DeleteAuditTrail: 0, "0": "DeleteAuditTrail",
+    /**
+     * Authorizes the batched record-deletion entry point.
+     */
     DeleteAllRecords: 1, "1": "DeleteAllRecords",
+    /**
+     * Authorizes appending a record.
+     */
     AddRecord: 2, "2": "AddRecord",
+    /**
+     * Authorizes deleting an individual record.
+     */
     DeleteRecord: 3, "3": "DeleteRecord",
+    /**
+     * Authorizes adding a record that supersedes earlier records via `RecordCorrection`.
+     */
     CorrectRecord: 4, "4": "CorrectRecord",
+    /**
+     * Authorizes replacing the full {@link LockingConfig}.
+     */
     UpdateLockingConfig: 5, "5": "UpdateLockingConfig",
+    /**
+     * Authorizes updating only the delete-record window of the locking configuration.
+     */
     UpdateLockingConfigForDeleteRecord: 6, "6": "UpdateLockingConfigForDeleteRecord",
+    /**
+     * Authorizes updating only the delete-trail lock of the locking configuration.
+     */
     UpdateLockingConfigForDeleteTrail: 7, "7": "UpdateLockingConfigForDeleteTrail",
+    /**
+     * Authorizes updating only the write lock of the locking configuration.
+     */
     UpdateLockingConfigForWrite: 8, "8": "UpdateLockingConfigForWrite",
+    /**
+     * Authorizes creating roles.
+     */
     AddRoles: 9, "9": "AddRoles",
+    /**
+     * Authorizes updating existing roles.
+     */
     UpdateRoles: 10, "10": "UpdateRoles",
+    /**
+     * Authorizes deleting roles.
+     */
     DeleteRoles: 11, "11": "DeleteRoles",
+    /**
+     * Authorizes issuing capabilities.
+     */
     AddCapabilities: 12, "12": "AddCapabilities",
+    /**
+     * Authorizes revoking, destroying, and cleaning up capabilities.
+     */
     RevokeCapabilities: 13, "13": "RevokeCapabilities",
+    /**
+     * Authorizes replacing the trail's `updatableMetadata`.
+     */
     UpdateMetadata: 14, "14": "UpdateMetadata",
+    /**
+     * Authorizes clearing the trail's `updatableMetadata`.
+     */
     DeleteMetadata: 15, "15": "DeleteMetadata",
+    /**
+     * Authorizes the migration entry point used after package upgrades.
+     */
     Migrate: 16, "16": "Migrate",
+    /**
+     * Authorizes adding entries to the trail's record-tag registry.
+     */
     AddRecordTags: 17, "17": "AddRecordTags",
+    /**
+     * Authorizes removing entries from the trail's record-tag registry.
+     */
     DeleteRecordTags: 18, "18": "DeleteRecordTags",
 });
 
+/**
+ * Set of permissions granted by a role.
+ */
 export class PermissionSet {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3000,6 +4145,7 @@ export class PermissionSet {
         wasm.__wbg_permissionset_free(ptr, 0);
     }
     /**
+     * Permissions granted by this set.
      * @returns {any[]}
      */
     get permissions() {
@@ -3009,6 +4155,9 @@ export class PermissionSet {
         return v1;
     }
     /**
+     * Returns the recommended permission set for the reserved initial-admin role.
+     *
+     * @returns A {@link PermissionSet} that authorizes role and capability administration.
      * @returns {PermissionSet}
      */
     static adminPermissions() {
@@ -3016,6 +4165,9 @@ export class PermissionSet {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Returns the permissions needed to issue and revoke capabilities.
+     *
+     * @returns A {@link PermissionSet} that authorizes the capability lifecycle.
      * @returns {PermissionSet}
      */
     static capAdminPermissions() {
@@ -3023,6 +4175,9 @@ export class PermissionSet {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Returns the permissions needed to administer locking rules.
+     *
+     * @returns A {@link PermissionSet} that authorizes updates to all locking dimensions.
      * @returns {PermissionSet}
      */
     static lockingAdminPermissions() {
@@ -3030,6 +4185,10 @@ export class PermissionSet {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Returns the permissions needed to administer mutable metadata.
+     *
+     * @returns A {@link PermissionSet} that authorizes updating and clearing
+     * `updatableMetadata`.
      * @returns {PermissionSet}
      */
     static metadataAdminPermissions() {
@@ -3037,6 +4196,9 @@ export class PermissionSet {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Creates a permission set from an explicit list of permissions.
+     *
+     * @param permissions - Permissions to include in the set.
      * @param {any[]} permissions
      */
     constructor(permissions) {
@@ -3048,6 +4210,9 @@ export class PermissionSet {
         return this;
     }
     /**
+     * Returns the permissions needed to administer records.
+     *
+     * @returns A {@link PermissionSet} that authorizes record reads, writes, and deletions.
      * @returns {PermissionSet}
      */
     static recordAdminPermissions() {
@@ -3055,6 +4220,9 @@ export class PermissionSet {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Returns the permissions needed to administer roles.
+     *
+     * @returns A {@link PermissionSet} that authorizes adding, updating, and deleting roles.
      * @returns {PermissionSet}
      */
     static roleAdminPermissions() {
@@ -3062,6 +4230,10 @@ export class PermissionSet {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Returns the permissions needed to administer record tags.
+     *
+     * @returns A {@link PermissionSet} that authorizes adding and removing entries from the
+     * trail's record-tag registry.
      * @returns {PermissionSet}
      */
     static tagAdminPermissions() {
@@ -3069,6 +4241,7 @@ export class PermissionSet {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Permissions granted by this set.
      * @param {any[]} arg0
      */
     set permissions(arg0) {
@@ -3079,6 +4252,13 @@ export class PermissionSet {
 }
 if (Symbol.dispose) PermissionSet.prototype[Symbol.dispose] = PermissionSet.prototype.free;
 
+/**
+ * Single audit-trail record.
+ *
+ * @remarks
+ * Records form a tamper-evident, sequential chain: each record has a monotonically increasing
+ * sequence number that is never reused, even after the record is deleted.
+ */
 export class Record {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3118,6 +4298,7 @@ export class Record {
         wasm.__wbg_record_free(ptr, 0);
     }
     /**
+     * Millisecond timestamp at which the record was added.
      * @returns {bigint}
      */
     get addedAt() {
@@ -3125,6 +4306,7 @@ export class Record {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Address that added the record.
      * @returns {string}
      */
     get addedBy() {
@@ -3140,6 +4322,7 @@ export class Record {
         }
     }
     /**
+     * Correction relationships for this record.
      * @returns {RecordCorrection}
      */
     get correction() {
@@ -3147,6 +4330,7 @@ export class Record {
         return RecordCorrection.__wrap(ret);
     }
     /**
+     * Record payload stored on-chain.
      * @returns {Data}
      */
     get data() {
@@ -3154,6 +4338,7 @@ export class Record {
         return Data.__wrap(ret);
     }
     /**
+     * Optional application-defined metadata.
      * @returns {string | undefined}
      */
     get metadata() {
@@ -3166,6 +4351,7 @@ export class Record {
         return v1;
     }
     /**
+     * Monotonic record sequence number inside the trail.
      * @returns {bigint}
      */
     get sequenceNumber() {
@@ -3173,6 +4359,7 @@ export class Record {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Optional trail-owned tag attached to the record.
      * @returns {string | undefined}
      */
     get tag() {
@@ -3185,12 +4372,14 @@ export class Record {
         return v1;
     }
     /**
+     * Millisecond timestamp at which the record was added.
      * @param {bigint} arg0
      */
     set addedAt(arg0) {
         wasm.__wbg_set_record_addedAt(this.__wbg_ptr, arg0);
     }
     /**
+     * Address that added the record.
      * @param {string} arg0
      */
     set addedBy(arg0) {
@@ -3199,6 +4388,7 @@ export class Record {
         wasm.__wbg_set_record_addedBy(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Correction relationships for this record.
      * @param {RecordCorrection} arg0
      */
     set correction(arg0) {
@@ -3207,6 +4397,7 @@ export class Record {
         wasm.__wbg_set_record_correction(this.__wbg_ptr, ptr0);
     }
     /**
+     * Record payload stored on-chain.
      * @param {Data} arg0
      */
     set data(arg0) {
@@ -3215,6 +4406,7 @@ export class Record {
         wasm.__wbg_set_record_data(this.__wbg_ptr, ptr0);
     }
     /**
+     * Optional application-defined metadata.
      * @param {string | null} [arg0]
      */
     set metadata(arg0) {
@@ -3223,12 +4415,14 @@ export class Record {
         wasm.__wbg_set_record_metadata(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Monotonic record sequence number inside the trail.
      * @param {bigint} arg0
      */
     set sequenceNumber(arg0) {
         wasm.__wbg_set_record_sequenceNumber(this.__wbg_ptr, arg0);
     }
     /**
+     * Optional trail-owned tag attached to the record.
      * @param {string | null} [arg0]
      */
     set tag(arg0) {
@@ -3239,6 +4433,9 @@ export class Record {
 }
 if (Symbol.dispose) Record.prototype[Symbol.dispose] = Record.prototype.free;
 
+/**
+ * Event payload emitted when a record is added.
+ */
 export class RecordAdded {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3269,6 +4466,7 @@ export class RecordAdded {
         wasm.__wbg_recordadded_free(ptr, 0);
     }
     /**
+     * Address that added the record.
      * @returns {string}
      */
     get addedBy() {
@@ -3284,6 +4482,7 @@ export class RecordAdded {
         }
     }
     /**
+     * Sequence number assigned to the new record.
      * @returns {bigint}
      */
     get sequenceNumber() {
@@ -3291,6 +4490,7 @@ export class RecordAdded {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Millisecond event timestamp.
      * @returns {bigint}
      */
     get timestamp() {
@@ -3298,6 +4498,7 @@ export class RecordAdded {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Trail object ID receiving the new record.
      * @returns {string}
      */
     get trailId() {
@@ -3313,6 +4514,7 @@ export class RecordAdded {
         }
     }
     /**
+     * Address that added the record.
      * @param {string} arg0
      */
     set addedBy(arg0) {
@@ -3321,18 +4523,21 @@ export class RecordAdded {
         wasm.__wbg_set_recordadded_addedBy(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Sequence number assigned to the new record.
      * @param {bigint} arg0
      */
     set sequenceNumber(arg0) {
         wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Millisecond event timestamp.
      * @param {bigint} arg0
      */
     set timestamp(arg0) {
         wasm.__wbg_set_recordadded_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Trail object ID receiving the new record.
      * @param {string} arg0
      */
     set trailId(arg0) {
@@ -3343,6 +4548,14 @@ export class RecordAdded {
 }
 if (Symbol.dispose) RecordAdded.prototype[Symbol.dispose] = RecordAdded.prototype.free;
 
+/**
+ * Correction metadata attached to a record.
+ *
+ * @remarks
+ * {@link RecordCorrection.replaces} is fixed at record creation and lists the sequence numbers
+ * this record supersedes; {@link RecordCorrection.isReplacedBy} is a back-pointer the trail sets
+ * later when this record itself is corrected.
+ */
 export class RecordCorrection {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3371,6 +4584,7 @@ export class RecordCorrection {
         wasm.__wbg_recordcorrection_free(ptr, 0);
     }
     /**
+     * Sequence number of the record that supersedes this one, if any.
      * @returns {bigint | undefined}
      */
     get isReplacedBy() {
@@ -3378,6 +4592,7 @@ export class RecordCorrection {
         return ret[0] === 0 ? undefined : BigInt.asUintN(64, ret[1]);
     }
     /**
+     * Sorted sequence numbers that this record supersedes.
      * @returns {BigUint64Array}
      */
     get replaces() {
@@ -3387,12 +4602,14 @@ export class RecordCorrection {
         return v1;
     }
     /**
+     * Sequence number of the record that supersedes this one, if any.
      * @param {bigint | null} [arg0]
      */
     set isReplacedBy(arg0) {
         wasm.__wbg_set_capability_validFrom(this.__wbg_ptr, !isLikeNone(arg0), isLikeNone(arg0) ? BigInt(0) : arg0);
     }
     /**
+     * Sorted sequence numbers that this record supersedes.
      * @param {BigUint64Array} arg0
      */
     set replaces(arg0) {
@@ -3403,6 +4620,9 @@ export class RecordCorrection {
 }
 if (Symbol.dispose) RecordCorrection.prototype[Symbol.dispose] = RecordCorrection.prototype.free;
 
+/**
+ * Event payload emitted when a record is deleted.
+ */
 export class RecordDeleted {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3433,6 +4653,7 @@ export class RecordDeleted {
         wasm.__wbg_recorddeleted_free(ptr, 0);
     }
     /**
+     * Address that deleted the record.
      * @returns {string}
      */
     get deletedBy() {
@@ -3448,6 +4669,7 @@ export class RecordDeleted {
         }
     }
     /**
+     * Sequence number of the deleted record.
      * @returns {bigint}
      */
     get sequenceNumber() {
@@ -3455,6 +4677,7 @@ export class RecordDeleted {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Millisecond event timestamp.
      * @returns {bigint}
      */
     get timestamp() {
@@ -3462,6 +4685,7 @@ export class RecordDeleted {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Trail object ID from which the record was deleted.
      * @returns {string}
      */
     get trailId() {
@@ -3477,6 +4701,7 @@ export class RecordDeleted {
         }
     }
     /**
+     * Address that deleted the record.
      * @param {string} arg0
      */
     set deletedBy(arg0) {
@@ -3485,18 +4710,21 @@ export class RecordDeleted {
         wasm.__wbg_set_recordadded_addedBy(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Sequence number of the deleted record.
      * @param {bigint} arg0
      */
     set sequenceNumber(arg0) {
         wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Millisecond event timestamp.
      * @param {bigint} arg0
      */
     set timestamp(arg0) {
         wasm.__wbg_set_recordadded_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Trail object ID from which the record was deleted.
      * @param {string} arg0
      */
     set trailId(arg0) {
@@ -3507,6 +4735,9 @@ export class RecordDeleted {
 }
 if (Symbol.dispose) RecordDeleted.prototype[Symbol.dispose] = RecordDeleted.prototype.free;
 
+/**
+ * Trail-owned record tag plus its usage count.
+ */
 export class RecordTagEntry {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3535,6 +4766,7 @@ export class RecordTagEntry {
         wasm.__wbg_recordtagentry_free(ptr, 0);
     }
     /**
+     * Tag name.
      * @returns {string}
      */
     get tag() {
@@ -3550,6 +4782,7 @@ export class RecordTagEntry {
         }
     }
     /**
+     * Combined number of records and roles currently referencing the tag.
      * @returns {bigint}
      */
     get usageCount() {
@@ -3557,6 +4790,7 @@ export class RecordTagEntry {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Tag name.
      * @param {string} arg0
      */
     set tag(arg0) {
@@ -3565,6 +4799,7 @@ export class RecordTagEntry {
         wasm.__wbg_set_audittrailcreated_trailId(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Combined number of records and roles currently referencing the tag.
      * @param {bigint} arg0
      */
     set usageCount(arg0) {
@@ -3573,6 +4808,15 @@ export class RecordTagEntry {
 }
 if (Symbol.dispose) RecordTagEntry.prototype[Symbol.dispose] = RecordTagEntry.prototype.free;
 
+/**
+ * Transaction wrapper for removing a record tag from the trail registry.
+ *
+ * @remarks
+ * Aborts on-chain if the tag is not in the registry or while it is still referenced by any
+ * existing record or role-tag restriction.
+ *
+ * Requires the {@link Permission.DeleteRecordTags} permission.
+ */
 export class RemoveRecordTag {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3599,6 +4843,13 @@ export class RemoveRecordTag {
         wasm.__wbg_removerecordtag_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -3610,6 +4861,14 @@ export class RemoveRecordTag {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -3620,6 +4879,18 @@ export class RemoveRecordTag {
 }
 if (Symbol.dispose) RemoveRecordTag.prototype[Symbol.dispose] = RemoveRecordTag.prototype.free;
 
+/**
+ * Transaction wrapper for revoking a capability.
+ *
+ * @remarks
+ * Adds the capability ID to the trail's denylist. Pass `capabilityValidUntil` so
+ * {@link CleanupRevokedCapabilities} can later prune the entry once that timestamp elapses; pass
+ * `null` to keep the denylist entry permanently.
+ *
+ * Requires the {@link Permission.RevokeCapabilities} permission.
+ *
+ * Emits a {@link CapabilityRevoked} event on success.
+ */
 export class RevokeCapability {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3646,6 +4917,15 @@ export class RevokeCapability {
         wasm.__wbg_revokecapability_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link CapabilityRevoked} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -3657,6 +4937,14 @@ export class RevokeCapability {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -3667,6 +4955,18 @@ export class RevokeCapability {
 }
 if (Symbol.dispose) RevokeCapability.prototype[Symbol.dispose] = RevokeCapability.prototype.free;
 
+/**
+ * Transaction wrapper for revoking an initial-admin capability.
+ *
+ * @remarks
+ * Same denylist semantics as {@link RevokeCapability} but uses the dedicated entry point reserved
+ * for initial-admin capability IDs. **Warning:** revoking every initial-admin capability
+ * permanently seals the trail.
+ *
+ * Requires the {@link Permission.RevokeCapabilities} permission.
+ *
+ * Emits a {@link CapabilityRevoked} event on success.
+ */
 export class RevokeInitialAdminCapability {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3693,6 +4993,15 @@ export class RevokeInitialAdminCapability {
         wasm.__wbg_revokeinitialadmincapability_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link CapabilityRevoked} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -3704,6 +5013,14 @@ export class RevokeInitialAdminCapability {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -3714,6 +5031,124 @@ export class RevokeInitialAdminCapability {
 }
 if (Symbol.dispose) RevokeInitialAdminCapability.prototype[Symbol.dispose] = RevokeInitialAdminCapability.prototype.free;
 
+/**
+ * Event payload emitted when expired revoked-capability entries are cleaned up.
+ */
+export class RevokedCapabilitiesCleanedUp {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(RevokedCapabilitiesCleanedUp.prototype);
+        obj.__wbg_ptr = ptr;
+        RevokedCapabilitiesCleanedUpFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    toJSON() {
+        return {
+            cleanedBy: this.cleanedBy,
+            cleanedCount: this.cleanedCount,
+            timestamp: this.timestamp,
+            trailId: this.trailId,
+        };
+    }
+    toString() {
+        return JSON.stringify(this);
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        RevokedCapabilitiesCleanedUpFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_revokedcapabilitiescleanedup_free(ptr, 0);
+    }
+    /**
+     * Address that triggered the cleanup.
+     * @returns {string}
+     */
+    get cleanedBy() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_revokedcapabilitiescleanedup_cleanedBy(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Number of expired entries removed by this cleanup call.
+     * @returns {bigint}
+     */
+    get cleanedCount() {
+        const ret = wasm.__wbg_get_audittrailcreated_timestamp(this.__wbg_ptr);
+        return BigInt.asUintN(64, ret);
+    }
+    /**
+     * Millisecond event timestamp.
+     * @returns {bigint}
+     */
+    get timestamp() {
+        const ret = wasm.__wbg_get_recordadded_timestamp(this.__wbg_ptr);
+        return BigInt.asUintN(64, ret);
+    }
+    /**
+     * Trail object ID whose denylist was pruned.
+     * @returns {string}
+     */
+    get trailId() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_revokedcapabilitiescleanedup_trailId(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Address that triggered the cleanup.
+     * @param {string} arg0
+     */
+    set cleanedBy(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_recordadded_addedBy(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Number of expired entries removed by this cleanup call.
+     * @param {bigint} arg0
+     */
+    set cleanedCount(arg0) {
+        wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
+    }
+    /**
+     * Millisecond event timestamp.
+     * @param {bigint} arg0
+     */
+    set timestamp(arg0) {
+        wasm.__wbg_set_recordadded_timestamp(this.__wbg_ptr, arg0);
+    }
+    /**
+     * Trail object ID whose denylist was pruned.
+     * @param {string} arg0
+     */
+    set trailId(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_recordadded_trailId(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) RevokedCapabilitiesCleanedUp.prototype[Symbol.dispose] = RevokedCapabilitiesCleanedUp.prototype.free;
+
+/**
+ * Permissions required to administer roles, as enforced by the trail.
+ */
 export class RoleAdminPermissions {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3743,6 +5178,7 @@ export class RoleAdminPermissions {
         wasm.__wbg_roleadminpermissions_free(ptr, 0);
     }
     /**
+     * Permission required to create roles.
      * @returns {Permission}
      */
     get add() {
@@ -3750,6 +5186,7 @@ export class RoleAdminPermissions {
         return ret;
     }
     /**
+     * Permission required to delete roles.
      * @returns {Permission}
      */
     get delete() {
@@ -3757,6 +5194,7 @@ export class RoleAdminPermissions {
         return ret;
     }
     /**
+     * Permission required to update roles.
      * @returns {Permission}
      */
     get update() {
@@ -3764,18 +5202,21 @@ export class RoleAdminPermissions {
         return ret;
     }
     /**
+     * Permission required to create roles.
      * @param {Permission} arg0
      */
     set add(arg0) {
         wasm.__wbg_set_capabilityadminpermissions_add(this.__wbg_ptr, arg0);
     }
     /**
+     * Permission required to delete roles.
      * @param {Permission} arg0
      */
     set delete(arg0) {
         wasm.__wbg_set_capabilityadminpermissions_revoke(this.__wbg_ptr, arg0);
     }
     /**
+     * Permission required to update roles.
      * @param {Permission} arg0
      */
     set update(arg0) {
@@ -3784,6 +5225,9 @@ export class RoleAdminPermissions {
 }
 if (Symbol.dispose) RoleAdminPermissions.prototype[Symbol.dispose] = RoleAdminPermissions.prototype.free;
 
+/**
+ * Event payload emitted when a role is created.
+ */
 export class RoleCreated {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3816,6 +5260,7 @@ export class RoleCreated {
         wasm.__wbg_rolecreated_free(ptr, 0);
     }
     /**
+     * Address that created the role.
      * @returns {string}
      */
     get createdBy() {
@@ -3831,6 +5276,7 @@ export class RoleCreated {
         }
     }
     /**
+     * Permissions granted by the new role.
      * @returns {PermissionSet}
      */
     get permissions() {
@@ -3838,6 +5284,7 @@ export class RoleCreated {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Optional record-tag restrictions stored as role data.
      * @returns {RoleTags | undefined}
      */
     get roleTags() {
@@ -3845,6 +5292,7 @@ export class RoleCreated {
         return ret === 0 ? undefined : RoleTags.__wrap(ret);
     }
     /**
+     * Role name.
      * @returns {string}
      */
     get role() {
@@ -3860,6 +5308,7 @@ export class RoleCreated {
         }
     }
     /**
+     * Millisecond event timestamp.
      * @returns {bigint}
      */
     get timestamp() {
@@ -3867,6 +5316,7 @@ export class RoleCreated {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Trail object ID that owns the role.
      * @returns {string}
      */
     get trailId() {
@@ -3882,6 +5332,7 @@ export class RoleCreated {
         }
     }
     /**
+     * Address that created the role.
      * @param {string} arg0
      */
     set createdBy(arg0) {
@@ -3890,6 +5341,7 @@ export class RoleCreated {
         wasm.__wbg_set_capability_targetKey(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Permissions granted by the new role.
      * @param {PermissionSet} arg0
      */
     set permissions(arg0) {
@@ -3898,6 +5350,7 @@ export class RoleCreated {
         wasm.__wbg_set_rolecreated_permissions(this.__wbg_ptr, ptr0);
     }
     /**
+     * Optional record-tag restrictions stored as role data.
      * @param {RoleTags | null} [arg0]
      */
     set roleTags(arg0) {
@@ -3909,6 +5362,7 @@ export class RoleCreated {
         wasm.__wbg_set_rolecreated_roleTags(this.__wbg_ptr, ptr0);
     }
     /**
+     * Role name.
      * @param {string} arg0
      */
     set role(arg0) {
@@ -3917,12 +5371,14 @@ export class RoleCreated {
         wasm.__wbg_set_audittrailcreated_creator(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Millisecond event timestamp.
      * @param {bigint} arg0
      */
     set timestamp(arg0) {
         wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Trail object ID that owns the role.
      * @param {string} arg0
      */
     set trailId(arg0) {
@@ -3933,6 +5389,9 @@ export class RoleCreated {
 }
 if (Symbol.dispose) RoleCreated.prototype[Symbol.dispose] = RoleCreated.prototype.free;
 
+/**
+ * Event payload emitted when a role is deleted.
+ */
 export class RoleDeleted {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -3963,6 +5422,7 @@ export class RoleDeleted {
         wasm.__wbg_roledeleted_free(ptr, 0);
     }
     /**
+     * Address that deleted the role.
      * @returns {string}
      */
     get deletedBy() {
@@ -3978,6 +5438,7 @@ export class RoleDeleted {
         }
     }
     /**
+     * Role name.
      * @returns {string}
      */
     get role() {
@@ -3993,6 +5454,7 @@ export class RoleDeleted {
         }
     }
     /**
+     * Millisecond event timestamp.
      * @returns {bigint}
      */
     get timestamp() {
@@ -4000,6 +5462,7 @@ export class RoleDeleted {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Trail object ID that owned the role.
      * @returns {string}
      */
     get trailId() {
@@ -4015,6 +5478,7 @@ export class RoleDeleted {
         }
     }
     /**
+     * Address that deleted the role.
      * @param {string} arg0
      */
     set deletedBy(arg0) {
@@ -4023,6 +5487,7 @@ export class RoleDeleted {
         wasm.__wbg_set_capability_id(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Role name.
      * @param {string} arg0
      */
     set role(arg0) {
@@ -4031,12 +5496,14 @@ export class RoleDeleted {
         wasm.__wbg_set_audittrailcreated_creator(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Millisecond event timestamp.
      * @param {bigint} arg0
      */
     set timestamp(arg0) {
         wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Trail object ID that owned the role.
      * @param {string} arg0
      */
     set trailId(arg0) {
@@ -4047,6 +5514,13 @@ export class RoleDeleted {
 }
 if (Symbol.dispose) RoleDeleted.prototype[Symbol.dispose] = RoleDeleted.prototype.free;
 
+/**
+ * Role-scoped access-control API.
+ *
+ * @remarks
+ * Identifies one role name inside the trail's access-control state and builds transactions that
+ * act on that role.
+ */
 export class RoleHandle {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4074,6 +5548,24 @@ export class RoleHandle {
         wasm.__wbg_rolehandle_free(ptr, 0);
     }
     /**
+     * Builds a role-creation transaction.
+     *
+     * @remarks
+     * Creates this role with `permissions` and the optional `roleTags` allowlist. Each tag
+     * referenced by `roleTags` must already exist in the trail-owned tag registry; the on-chain
+     * call aborts otherwise and bumps that tag's usage counter on success.
+     *
+     * Requires the {@link Permission.AddRoles} permission.
+     *
+     * @param permissions - {@link PermissionSet} granted by the new role.
+     * @param roleTags - Optional {@link RoleTags} allowlist that restricts the role's reach to
+     * records carrying one of these tags.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link CreateRole} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
+     *
+     * Emits a {@link RoleCreated} event on success.
      * @param {PermissionSet} permissions
      * @param {RoleTags | null} [role_tags]
      * @returns {TransactionBuilder<CreateRole>}
@@ -4093,6 +5585,19 @@ export class RoleHandle {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds a role-deletion transaction for this role.
+     *
+     * @remarks
+     * Decrements the usage count of every tag the role's `roleTags` referenced. The reserved
+     * initial-admin role cannot be deleted.
+     *
+     * Requires the {@link Permission.DeleteRoles} permission.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link DeleteRole} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
+     *
+     * Emits a {@link RoleDeleted} event on success.
      * @returns {TransactionBuilder<DeleteRole>}
      */
     delete() {
@@ -4103,6 +5608,24 @@ export class RoleHandle {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds a capability-issuance transaction for this role.
+     *
+     * @remarks
+     * The resulting capability always targets this trail and grants exactly this role. Only
+     * `options.issuedTo`, `options.validFromMs`, and `options.validUntilMs` configure restrictions
+     * on the issued object; enforcement happens on-chain when the capability is later presented
+     * for authorization. The capability is transferred to `options.issuedTo` if set, otherwise to
+     * the caller.
+     *
+     * Requires the {@link Permission.AddCapabilities} permission.
+     *
+     * @param options - {@link CapabilityIssueOptions} configuring recipient and validity window.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link IssueCapability} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
+     *
+     * Emits a {@link CapabilityIssued} event on success.
      * @param {CapabilityIssueOptions} options
      * @returns {TransactionBuilder<IssueCapability>}
      */
@@ -4116,6 +5639,9 @@ export class RoleHandle {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Returns the role name represented by this handle.
+     *
+     * @returns The role name bound to this handle.
      * @returns {string}
      */
     get name() {
@@ -4131,6 +5657,26 @@ export class RoleHandle {
         }
     }
     /**
+     * Builds a role-update transaction for this role.
+     *
+     * @remarks
+     * Replaces both the role's permission set and its `roleTags` allowlist. Any newly supplied tag
+     * must already exist in the trail's record-tag registry; tag usage counters are adjusted to
+     * reflect the difference between the old and the new role-tag sets. Updating the
+     * initial-admin role with permissions that do not include every permission configured in the
+     * trail's role- and capability-admin permission sets aborts on-chain.
+     *
+     * Requires the {@link Permission.UpdateRoles} permission.
+     *
+     * @param permissions - Replacement {@link PermissionSet} for the role.
+     * @param roleTags - Replacement {@link RoleTags} allowlist, or `null` to clear the
+     * restriction.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link UpdateRole} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
+     *
+     * Emits a {@link RoleUpdated} event on success.
      * @param {PermissionSet} permissions
      * @param {RoleTags | null} [role_tags]
      * @returns {TransactionBuilder<UpdateRole>}
@@ -4152,6 +5698,14 @@ export class RoleHandle {
 }
 if (Symbol.dispose) RoleHandle.prototype[Symbol.dispose] = RoleHandle.prototype.free;
 
+/**
+ * Snapshot of the trail's role map.
+ *
+ * @remarks
+ * Mirrors the access-control state maintained by the audit-trail package, including the reserved
+ * initial-admin role, the revoked-capability denylist, and the role data used for tag-aware
+ * authorization.
+ */
 export class RoleMap {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4185,6 +5739,7 @@ export class RoleMap {
         wasm.__wbg_rolemap_free(ptr, 0);
     }
     /**
+     * Permissions required to administer capabilities.
      * @returns {CapabilityAdminPermissions}
      */
     get capabilityAdminPermissions() {
@@ -4192,6 +5747,7 @@ export class RoleMap {
         return CapabilityAdminPermissions.__wrap(ret);
     }
     /**
+     * Capability IDs currently recognized as initial-admin capabilities.
      * @returns {string[]}
      */
     get initialAdminCapIds() {
@@ -4201,6 +5757,9 @@ export class RoleMap {
         return v1;
     }
     /**
+     * Reserved role name used for initial-admin capabilities.
+     *
+     * Always equals `"Admin"`. The role bearing this name cannot be deleted.
      * @returns {string}
      */
     get initialAdminRoleName() {
@@ -4216,6 +5775,7 @@ export class RoleMap {
         }
     }
     /**
+     * Denylist of revoked capability IDs.
      * @returns {ObjectIdLinkedTable}
      */
     get revokedCapabilities() {
@@ -4223,6 +5783,7 @@ export class RoleMap {
         return ObjectIdLinkedTable.__wrap(ret);
     }
     /**
+     * Permissions required to administer roles.
      * @returns {RoleAdminPermissions}
      */
     get roleAdminPermissions() {
@@ -4230,6 +5791,7 @@ export class RoleMap {
         return RoleAdminPermissions.__wrap(ret);
     }
     /**
+     * Role definitions sorted by role name.
      * @returns {RolePermissionsEntry[]}
      */
     get roles() {
@@ -4239,6 +5801,7 @@ export class RoleMap {
         return v1;
     }
     /**
+     * Trail object ID that this role map protects.
      * @returns {string}
      */
     get targetKey() {
@@ -4254,6 +5817,7 @@ export class RoleMap {
         }
     }
     /**
+     * Permissions required to administer capabilities.
      * @param {CapabilityAdminPermissions} arg0
      */
     set capabilityAdminPermissions(arg0) {
@@ -4262,6 +5826,7 @@ export class RoleMap {
         wasm.__wbg_set_rolemap_capabilityAdminPermissions(this.__wbg_ptr, ptr0);
     }
     /**
+     * Capability IDs currently recognized as initial-admin capabilities.
      * @param {string[]} arg0
      */
     set initialAdminCapIds(arg0) {
@@ -4270,6 +5835,9 @@ export class RoleMap {
         wasm.__wbg_set_rolemap_initialAdminCapIds(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Reserved role name used for initial-admin capabilities.
+     *
+     * Always equals `"Admin"`. The role bearing this name cannot be deleted.
      * @param {string} arg0
      */
     set initialAdminRoleName(arg0) {
@@ -4278,6 +5846,7 @@ export class RoleMap {
         wasm.__wbg_set_rolemap_initialAdminRoleName(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Denylist of revoked capability IDs.
      * @param {ObjectIdLinkedTable} arg0
      */
     set revokedCapabilities(arg0) {
@@ -4286,6 +5855,7 @@ export class RoleMap {
         wasm.__wbg_set_rolemap_revokedCapabilities(this.__wbg_ptr, ptr0);
     }
     /**
+     * Permissions required to administer roles.
      * @param {RoleAdminPermissions} arg0
      */
     set roleAdminPermissions(arg0) {
@@ -4294,6 +5864,7 @@ export class RoleMap {
         wasm.__wbg_set_rolemap_roleAdminPermissions(this.__wbg_ptr, ptr0);
     }
     /**
+     * Role definitions sorted by role name.
      * @param {RolePermissionsEntry[]} arg0
      */
     set roles(arg0) {
@@ -4302,6 +5873,7 @@ export class RoleMap {
         wasm.__wbg_set_rolemap_roles(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Trail object ID that this role map protects.
      * @param {string} arg0
      */
     set targetKey(arg0) {
@@ -4312,6 +5884,9 @@ export class RoleMap {
 }
 if (Symbol.dispose) RoleMap.prototype[Symbol.dispose] = RoleMap.prototype.free;
 
+/**
+ * Flattened role entry exposed inside {@link RoleMap}.
+ */
 export class RolePermissionsEntry {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4347,6 +5922,7 @@ export class RolePermissionsEntry {
         wasm.__wbg_rolepermissionsentry_free(ptr, 0);
     }
     /**
+     * Role name.
      * @returns {string}
      */
     get name() {
@@ -4362,6 +5938,7 @@ export class RolePermissionsEntry {
         }
     }
     /**
+     * Permissions granted by the role.
      * @returns {any[]}
      */
     get permissions() {
@@ -4371,6 +5948,7 @@ export class RolePermissionsEntry {
         return v1;
     }
     /**
+     * Optional role-scoped record-tag restrictions.
      * @returns {RoleTags | undefined}
      */
     get roleTags() {
@@ -4378,6 +5956,7 @@ export class RolePermissionsEntry {
         return ret === 0 ? undefined : RoleTags.__wrap(ret);
     }
     /**
+     * Role name.
      * @param {string} arg0
      */
     set name(arg0) {
@@ -4386,6 +5965,7 @@ export class RolePermissionsEntry {
         wasm.__wbg_set_immutablemetadata_name(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Permissions granted by the role.
      * @param {any[]} arg0
      */
     set permissions(arg0) {
@@ -4394,6 +5974,7 @@ export class RolePermissionsEntry {
         wasm.__wbg_set_rolepermissionsentry_permissions(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Optional role-scoped record-tag restrictions.
      * @param {RoleTags | null} [arg0]
      */
     set roleTags(arg0) {
@@ -4407,6 +5988,13 @@ export class RolePermissionsEntry {
 }
 if (Symbol.dispose) RolePermissionsEntry.prototype[Symbol.dispose] = RolePermissionsEntry.prototype.free;
 
+/**
+ * Allowlisted record tags stored on a role.
+ *
+ * @remarks
+ * Every tag listed here must already exist in the trail's record-tag registry before the role is
+ * created or updated; otherwise the on-chain call aborts.
+ */
 export class RoleTags {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4434,6 +6022,7 @@ export class RoleTags {
         wasm.__wbg_roletags_free(ptr, 0);
     }
     /**
+     * Sorted tag names allowed by the role.
      * @returns {string[]}
      */
     get tags() {
@@ -4443,6 +6032,12 @@ export class RoleTags {
         return v1;
     }
     /**
+     * Creates role-tag restrictions from a list of tag names.
+     *
+     * @remarks
+     * The supplied names are sorted alphabetically and de-duplicated.
+     *
+     * @param tags - Tag names allowed by the role.
      * @param {string[]} tags
      */
     constructor(tags) {
@@ -4454,6 +6049,7 @@ export class RoleTags {
         return this;
     }
     /**
+     * Sorted tag names allowed by the role.
      * @param {string[]} arg0
      */
     set tags(arg0) {
@@ -4464,6 +6060,9 @@ export class RoleTags {
 }
 if (Symbol.dispose) RoleTags.prototype[Symbol.dispose] = RoleTags.prototype.free;
 
+/**
+ * Event payload emitted when a role is updated.
+ */
 export class RoleUpdated {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4496,6 +6095,7 @@ export class RoleUpdated {
         wasm.__wbg_roleupdated_free(ptr, 0);
     }
     /**
+     * Updated permissions for the role.
      * @returns {PermissionSet}
      */
     get permissions() {
@@ -4503,6 +6103,7 @@ export class RoleUpdated {
         return PermissionSet.__wrap(ret);
     }
     /**
+     * Updated record-tag restrictions, if any.
      * @returns {RoleTags | undefined}
      */
     get roleTags() {
@@ -4510,6 +6111,7 @@ export class RoleUpdated {
         return ret === 0 ? undefined : RoleTags.__wrap(ret);
     }
     /**
+     * Role name.
      * @returns {string}
      */
     get role() {
@@ -4525,6 +6127,7 @@ export class RoleUpdated {
         }
     }
     /**
+     * Millisecond event timestamp.
      * @returns {bigint}
      */
     get timestamp() {
@@ -4532,6 +6135,7 @@ export class RoleUpdated {
         return BigInt.asUintN(64, ret);
     }
     /**
+     * Trail object ID that owns the role.
      * @returns {string}
      */
     get trailId() {
@@ -4547,6 +6151,7 @@ export class RoleUpdated {
         }
     }
     /**
+     * Address that updated the role.
      * @returns {string}
      */
     get updatedBy() {
@@ -4562,6 +6167,7 @@ export class RoleUpdated {
         }
     }
     /**
+     * Updated permissions for the role.
      * @param {PermissionSet} arg0
      */
     set permissions(arg0) {
@@ -4570,6 +6176,7 @@ export class RoleUpdated {
         wasm.__wbg_set_rolecreated_permissions(this.__wbg_ptr, ptr0);
     }
     /**
+     * Updated record-tag restrictions, if any.
      * @param {RoleTags | null} [arg0]
      */
     set roleTags(arg0) {
@@ -4581,6 +6188,7 @@ export class RoleUpdated {
         wasm.__wbg_set_rolecreated_roleTags(this.__wbg_ptr, ptr0);
     }
     /**
+     * Role name.
      * @param {string} arg0
      */
     set role(arg0) {
@@ -4589,12 +6197,14 @@ export class RoleUpdated {
         wasm.__wbg_set_audittrailcreated_creator(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Millisecond event timestamp.
      * @param {bigint} arg0
      */
     set timestamp(arg0) {
         wasm.__wbg_set_audittrailcreated_timestamp(this.__wbg_ptr, arg0);
     }
     /**
+     * Trail object ID that owns the role.
      * @param {string} arg0
      */
     set trailId(arg0) {
@@ -4603,6 +6213,7 @@ export class RoleUpdated {
         wasm.__wbg_set_audittrailcreated_trailId(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Address that updated the role.
      * @param {string} arg0
      */
     set updatedBy(arg0) {
@@ -4613,6 +6224,13 @@ export class RoleUpdated {
 }
 if (Symbol.dispose) RoleUpdated.prototype[Symbol.dispose] = RoleUpdated.prototype.free;
 
+/**
+ * Time-based lock used in the trail's {@link LockingConfig}.
+ *
+ * @remarks
+ * {@link TimeLock.withUntilDestroyed} is rejected by the audit-trail package when used as the
+ * trail-delete lock; pass it only for the write lock.
+ */
 export class TimeLock {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4641,6 +6259,10 @@ export class TimeLock {
         wasm.__wbg_timelock_free(ptr, 0);
     }
     /**
+     * Returns the lock argument for parameterized variants.
+     *
+     * @returns The numeric argument for `UnlockAt`/`UnlockAtMs` variants, or `undefined`
+     * otherwise.
      * @returns {any}
      */
     get args() {
@@ -4648,6 +6270,9 @@ export class TimeLock {
         return ret;
     }
     /**
+     * Returns the lock variant.
+     *
+     * @returns The {@link TimeLockType} discriminant for this lock.
      * @returns {TimeLockType}
      */
     get type() {
@@ -4655,6 +6280,9 @@ export class TimeLock {
         return ret;
     }
     /**
+     * Creates a lock that never unlocks.
+     *
+     * @returns A lock that is always active.
      * @returns {TimeLock}
      */
     static withInfinite() {
@@ -4662,6 +6290,9 @@ export class TimeLock {
         return TimeLock.__wrap(ret);
     }
     /**
+     * Creates a disabled lock.
+     *
+     * @returns A lock that does not gate the protected operation.
      * @returns {TimeLock}
      */
     static withNone() {
@@ -4669,6 +6300,11 @@ export class TimeLock {
         return TimeLock.__wrap(ret);
     }
     /**
+     * Creates a lock that unlocks at a Unix timestamp in seconds.
+     *
+     * @param timeSec - Unlock time in seconds since the Unix epoch.
+     *
+     * @returns A lock that unlocks once the on-chain clock reaches `timeSec`.
      * @param {number} time_sec
      * @returns {TimeLock}
      */
@@ -4677,6 +6313,11 @@ export class TimeLock {
         return TimeLock.__wrap(ret);
     }
     /**
+     * Creates a lock that unlocks at a Unix timestamp in milliseconds.
+     *
+     * @param timeMs - Unlock time in milliseconds since the Unix epoch.
+     *
+     * @returns A lock that unlocks once the on-chain clock reaches `timeMs`.
      * @param {bigint} time_ms
      * @returns {TimeLock}
      */
@@ -4685,6 +6326,9 @@ export class TimeLock {
         return TimeLock.__wrap(ret);
     }
     /**
+     * Creates a lock that stays active until the protected object is destroyed.
+     *
+     * @returns A lock that remains active until the protected object is destroyed.
      * @returns {TimeLock}
      */
     static withUntilDestroyed() {
@@ -4695,16 +6339,41 @@ export class TimeLock {
 if (Symbol.dispose) TimeLock.prototype[Symbol.dispose] = TimeLock.prototype.free;
 
 /**
+ * Discriminant for the shape stored inside {@link TimeLock}.
  * @enum {0 | 1 | 2 | 3 | 4}
  */
 export const TimeLockType = Object.freeze({
+    /**
+     * The time lock is disabled.
+     */
     None: 0, "0": "None",
+    /**
+     * The lock unlocks at a Unix timestamp in seconds.
+     */
     UnlockAt: 1, "1": "UnlockAt",
+    /**
+     * The lock unlocks at a Unix timestamp in milliseconds.
+     */
     UnlockAtMs: 2, "2": "UnlockAtMs",
+    /**
+     * The lock stays active until the protected object is explicitly destroyed.
+     *
+     * Not supported as the trail-delete lock.
+     */
     UntilDestroyed: 3, "3": "UntilDestroyed",
+    /**
+     * The lock is always active.
+     */
     Infinite: 4, "4": "Infinite",
 });
 
+/**
+ * Access-control API scoped to a specific trail.
+ *
+ * @remarks
+ * Exposes role-management and capability-management operations for one trail. Per-role operations
+ * live on {@link RoleHandle}, which is reached through {@link TrailAccess.forRole}.
+ */
 export class TrailAccess {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4731,6 +6400,22 @@ export class TrailAccess {
         wasm.__wbg_trailaccess_free(ptr, 0);
     }
     /**
+     * Builds a cleanup transaction for expired revoked-capability entries.
+     *
+     * @remarks
+     * Only prunes denylist entries whose stored `validUntil` is non-zero and strictly less than
+     * the current clock time. Entries with `validUntil == 0` (revocations without a known expiry)
+     * remain on the denylist indefinitely. Does not revoke additional capabilities and does not
+     * destroy any objects.
+     *
+     * Requires the {@link Permission.RevokeCapabilities} permission.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the
+     * {@link CleanupRevokedCapabilities} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
+     *
+     * Emits a {@link RevokedCapabilitiesCleanedUp} event on success.
      * @returns {TransactionBuilder<CleanupRevokedCapabilities>}
      */
     cleanupRevokedCapabilities() {
@@ -4741,6 +6426,23 @@ export class TrailAccess {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds a capability-destruction transaction.
+     *
+     * @remarks
+     * Consumes the owned capability object and removes any matching denylist entry. This path is
+     * for ordinary capabilities only — initial-admin capabilities must use
+     * {@link TrailAccess.destroyInitialAdminCapability}.
+     *
+     * Requires the {@link Permission.RevokeCapabilities} permission.
+     *
+     * @param capabilityId - Object ID of the capability to destroy.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link DestroyCapability} transaction.
+     *
+     * @throws When `capabilityId` is malformed or the wrapper was created from a read-only
+     * client.
+     *
+     * Emits a {@link CapabilityDestroyed} event on success.
      * @param {string} capability_id
      * @returns {TransactionBuilder<DestroyCapability>}
      */
@@ -4754,6 +6456,24 @@ export class TrailAccess {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds an initial-admin-capability destruction transaction.
+     *
+     * @remarks
+     * Self-service: the holder consumes their own initial-admin capability without presenting
+     * another authorization capability. Initial-admin capability IDs are tracked separately and
+     * cannot be removed through the generic destroy path. **Warning:** if every initial-admin
+     * capability is destroyed (and none was issued separately), the trail is permanently sealed
+     * with no admin access possible.
+     *
+     * @param capabilityId - Object ID of the initial-admin capability to destroy.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the
+     * {@link DestroyInitialAdminCapability} transaction.
+     *
+     * @throws When `capabilityId` is malformed or the wrapper was created from a read-only
+     * client.
+     *
+     * Emits a {@link CapabilityDestroyed} event on success.
      * @param {string} capability_id
      * @returns {TransactionBuilder<DestroyInitialAdminCapability>}
      */
@@ -4767,6 +6487,15 @@ export class TrailAccess {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Returns a role-scoped handle for the given role name.
+     *
+     * @remarks
+     * The returned handle only identifies the role. If a role with `name` does not yet exist, the
+     * handle can still be used to create it via {@link RoleHandle.create}.
+     *
+     * @param name - Role name to bind the handle to.
+     *
+     * @returns A {@link RoleHandle} bound to `name` inside this trail.
      * @param {string} name
      * @returns {RoleHandle}
      */
@@ -4777,6 +6506,26 @@ export class TrailAccess {
         return RoleHandle.__wrap(ret);
     }
     /**
+     * Builds a capability-revocation transaction.
+     *
+     * @remarks
+     * Adds `capabilityId` to the trail's revoked-capability denylist. Initial-admin capabilities
+     * cannot be revoked through this path — use
+     * {@link TrailAccess.revokeInitialAdminCapability} instead.
+     *
+     * Requires the {@link Permission.RevokeCapabilities} permission.
+     *
+     * @param capabilityId - Object ID of the capability to revoke.
+     * @param capabilityValidUntil - Original capability expiry in milliseconds since the Unix
+     * epoch. Pass it so {@link CleanupRevokedCapabilities} can later prune the denylist entry once
+     * the timestamp has elapsed; pass `null` to keep the entry permanently.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link RevokeCapability} transaction.
+     *
+     * @throws When `capabilityId` is malformed or the wrapper was created from a read-only
+     * client.
+     *
+     * Emits a {@link CapabilityRevoked} event on success.
      * @param {string} capability_id
      * @param {bigint | null} [capability_valid_until]
      * @returns {TransactionBuilder<RevokeCapability>}
@@ -4791,6 +6540,27 @@ export class TrailAccess {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds an initial-admin-capability revocation transaction.
+     *
+     * @remarks
+     * Same denylist semantics as {@link TrailAccess.revokeCapability} but uses the dedicated entry
+     * point reserved for initial-admin capability IDs. **Warning:** revoking every initial-admin
+     * capability permanently seals the trail with no admin access possible.
+     *
+     * Requires the {@link Permission.RevokeCapabilities} permission.
+     *
+     * @param capabilityId - Object ID of the initial-admin capability to revoke.
+     * @param capabilityValidUntil - Original capability expiry in milliseconds since the Unix
+     * epoch. Pass it so {@link CleanupRevokedCapabilities} can later prune the denylist entry once
+     * the timestamp has elapsed; pass `null` to keep the entry permanently.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the
+     * {@link RevokeInitialAdminCapability} transaction.
+     *
+     * @throws When `capabilityId` is malformed or the wrapper was created from a read-only
+     * client.
+     *
+     * Emits a {@link CapabilityRevoked} event on success.
      * @param {string} capability_id
      * @param {bigint | null} [capability_valid_until]
      * @returns {TransactionBuilder<RevokeInitialAdminCapability>}
@@ -4807,6 +6577,13 @@ export class TrailAccess {
 }
 if (Symbol.dispose) TrailAccess.prototype[Symbol.dispose] = TrailAccess.prototype.free;
 
+/**
+ * Locking API scoped to a specific trail.
+ *
+ * @remarks
+ * Updates the trail's {@link LockingConfig} and queries whether an individual record is currently
+ * locked against deletion.
+ */
 export class TrailLocking {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4833,6 +6610,18 @@ export class TrailLocking {
         wasm.__wbg_traillocking_free(ptr, 0);
     }
     /**
+     * Returns whether a record is currently locked against deletion.
+     *
+     * @remarks
+     * Evaluates the trail's `deleteRecordWindow` against the record at `sequenceNumber` and the
+     * current clock time.
+     *
+     * @param sequenceNumber - Sequence number of the record to inspect.
+     *
+     * @returns `true` when the record is still inside the delete-record window, `false`
+     * otherwise.
+     *
+     * @throws When no record exists at `sequenceNumber`.
      * @param {bigint} sequence_number
      * @returns {Promise<boolean>}
      */
@@ -4841,6 +6630,20 @@ export class TrailLocking {
         return ret;
     }
     /**
+     * Builds a transaction that replaces the full locking configuration.
+     *
+     * @remarks
+     * Overwrites all three locking dimensions at once: delete-record window, delete-trail lock,
+     * and write lock. `config.deleteTrailLock` must not be {@link TimeLock.withUntilDestroyed};
+     * the on-chain call aborts otherwise.
+     *
+     * Requires the {@link Permission.UpdateLockingConfig} permission.
+     *
+     * @param config - Replacement {@link LockingConfig}.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link UpdateLockingConfig} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
      * @param {LockingConfig} config
      * @returns {TransactionBuilder<UpdateLockingConfig>}
      */
@@ -4854,6 +6657,20 @@ export class TrailLocking {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds a transaction that updates only the delete-record window.
+     *
+     * @remarks
+     * Replaces the trail's `deleteRecordWindow`. Records currently inside the new window
+     * immediately become locked against deletion.
+     *
+     * Requires the {@link Permission.UpdateLockingConfigForDeleteRecord} permission.
+     *
+     * @param window - Replacement {@link LockingWindow}.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the
+     * {@link UpdateDeleteRecordWindow} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
      * @param {LockingWindow} window
      * @returns {TransactionBuilder<UpdateDeleteRecordWindow>}
      */
@@ -4867,6 +6684,20 @@ export class TrailLocking {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds a transaction that updates only the delete-trail lock.
+     *
+     * @remarks
+     * Replaces the trail's `deleteTrailLock`. The new lock must not be
+     * {@link TimeLock.withUntilDestroyed}; the on-chain call aborts otherwise.
+     *
+     * Requires the {@link Permission.UpdateLockingConfigForDeleteTrail} permission.
+     *
+     * @param lock - Replacement delete-trail {@link TimeLock}.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the
+     * {@link UpdateDeleteTrailLock} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
      * @param {TimeLock} lock
      * @returns {TransactionBuilder<UpdateDeleteTrailLock>}
      */
@@ -4880,6 +6711,19 @@ export class TrailLocking {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds a transaction that updates only the write lock.
+     *
+     * @remarks
+     * Replaces the trail's `writeLock`. While the new lock is active, {@link TrailRecords.add}
+     * aborts on-chain. {@link TimeLock.withUntilDestroyed} is permitted here.
+     *
+     * Requires the {@link Permission.UpdateLockingConfigForWrite} permission.
+     *
+     * @param lock - Replacement write {@link TimeLock}.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link UpdateWriteLock} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
      * @param {TimeLock} lock
      * @returns {TransactionBuilder<UpdateWriteLock>}
      */
@@ -4895,6 +6739,13 @@ export class TrailLocking {
 }
 if (Symbol.dispose) TrailLocking.prototype[Symbol.dispose] = TrailLocking.prototype.free;
 
+/**
+ * Record API scoped to a specific trail.
+ *
+ * @remarks
+ * Builds record-oriented transactions and loads record data from the trail's linked-table
+ * storage.
+ */
 export class TrailRecords {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -4921,6 +6772,25 @@ export class TrailRecords {
         wasm.__wbg_trailrecords_free(ptr, 0);
     }
     /**
+     * Builds a record-add transaction.
+     *
+     * @remarks
+     * Records are appended sequentially with auto-assigned, monotonically increasing sequence
+     * numbers that are never reused. While the trail's `writeLock` is active the on-chain call
+     * aborts. When `tag` is set, it must already exist in the trail's record-tag registry and the
+     * supplied capability's role must allow that tag.
+     *
+     * Requires the {@link Permission.AddRecord} permission.
+     *
+     * @param data - {@link Data} payload of the new record.
+     * @param metadata - Optional application-defined metadata stored alongside the record.
+     * @param tag - Optional trail-owned tag attached to the record.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link AddRecord} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
+     *
+     * Emits a {@link RecordAdded} event on success.
      * @param {Data} data
      * @param {string | null} [metadata]
      * @param {string | null} [tag]
@@ -4940,6 +6810,17 @@ export class TrailRecords {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Executes the correction helper for a record payload.
+     *
+     * @remarks
+     * Placeholder for a future correction helper — currently always throws because the underlying
+     * implementation is not yet wired up.
+     *
+     * @param replaces - Sequence numbers of the records that the correction supersedes.
+     * @param data - Replacement record payload.
+     * @param metadata - Optional application-defined metadata stored alongside the correction.
+     *
+     * @throws Always; the helper is not yet implemented.
      * @param {BigUint64Array} replaces
      * @param {Data} data
      * @param {string | null} [metadata]
@@ -4956,6 +6837,22 @@ export class TrailRecords {
         return ret;
     }
     /**
+     * Builds a single-record delete transaction.
+     *
+     * @remarks
+     * The on-chain call aborts when no record exists at `sequenceNumber` or while the configured
+     * delete-record window still protects it. When the record carries a tag, the supplied
+     * capability's role must allow that tag.
+     *
+     * Requires the {@link Permission.DeleteRecord} permission.
+     *
+     * @param sequenceNumber - Sequence number of the record to delete.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link DeleteRecord} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
+     *
+     * Emits a {@link RecordDeleted} event on success.
      * @param {bigint} sequence_number
      * @returns {TransactionBuilder<DeleteRecord>}
      */
@@ -4967,6 +6864,24 @@ export class TrailRecords {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Builds a batched record-delete transaction.
+     *
+     * @remarks
+     * Walks the trail from the front and silently skips records still inside the delete-record
+     * window, deleting up to `limit` unlocked records in trail order. Tag-aware authorization
+     * applies to every record actually deleted.
+     *
+     * Requires the {@link Permission.DeleteAllRecords} permission.
+     *
+     * @param limit - Maximum number of records to delete in this batch.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link DeleteRecordsBatch} transaction;
+     * when applied it resolves to the sequence numbers of the records deleted in this batch, in
+     * deletion order — at most `limit` entries, possibly fewer.
+     *
+     * @throws When the wrapper was created from a read-only client.
+     *
+     * Emits one {@link RecordDeleted} event per deletion.
      * @param {bigint} limit
      * @returns {TransactionBuilder<DeleteRecordsBatch>}
      */
@@ -4978,6 +6893,14 @@ export class TrailRecords {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Loads one record by sequence number.
+     *
+     * @param sequenceNumber - Sequence number of the record to load.
+     *
+     * @returns The record stored at `sequenceNumber`.
+     *
+     * @throws When no record exists at the requested sequence number or the data cannot be
+     * deserialized.
      * @param {bigint} sequence_number
      * @returns {Promise<Record>}
      */
@@ -4986,6 +6909,15 @@ export class TrailRecords {
         return ret;
     }
     /**
+     * Lists all records in sequence-number order.
+     *
+     * @remarks
+     * Traverses the full on-chain linked table and can be expensive for large trails. For
+     * paginated access, use {@link TrailRecords.listPage}.
+     *
+     * @returns Every record in the trail, sorted by ascending sequence number.
+     *
+     * @throws When the trail object cannot be fetched or a record cannot be deserialized.
      * @returns {Promise<Record[]>}
      */
     list() {
@@ -4993,6 +6925,17 @@ export class TrailRecords {
         return ret;
     }
     /**
+     * Loads one page of records starting at `cursor`.
+     *
+     * @param cursor - Sequence-number cursor for the page boundary; pass `null` for the first
+     * page and reuse {@link PaginatedRecord.nextCursor} for subsequent pages.
+     * @param limit - Maximum number of records to return; may not exceed the SDK-side maximum
+     * page size.
+     *
+     * @returns A {@link PaginatedRecord} carrying the loaded records and pagination metadata.
+     *
+     * @throws When the trail object cannot be fetched, a record cannot be deserialized, or
+     * `limit` exceeds the SDK-side maximum.
      * @param {bigint | null | undefined} cursor
      * @param {number} limit
      * @returns {Promise<PaginatedRecord>}
@@ -5002,6 +6945,16 @@ export class TrailRecords {
         return ret;
     }
     /**
+     * Lists all records while enforcing a maximum number of entries.
+     *
+     * @remarks
+     * Use this as a safety net against unexpectedly large traversals.
+     *
+     * @param maxEntries - Upper bound on the number of records the caller is willing to load.
+     *
+     * @returns Every record in the trail, sorted by ascending sequence number.
+     *
+     * @throws When the trail's linked-table size exceeds `maxEntries`.
      * @param {number} max_entries
      * @returns {Promise<Record[]>}
      */
@@ -5010,6 +6963,11 @@ export class TrailRecords {
         return ret;
     }
     /**
+     * Returns the number of records currently stored in the trail.
+     *
+     * @returns Current record count.
+     *
+     * @throws When the trail object cannot be fetched.
      * @returns {Promise<bigint>}
      */
     recordCount() {
@@ -5019,6 +6977,13 @@ export class TrailRecords {
 }
 if (Symbol.dispose) TrailRecords.prototype[Symbol.dispose] = TrailRecords.prototype.free;
 
+/**
+ * Tag-registry API scoped to a specific trail.
+ *
+ * @remarks
+ * The registry defines the canonical set of tags that record writes and {@link RoleTags}
+ * restrictions may reference.
+ */
 export class TrailTags {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -5045,6 +7010,20 @@ export class TrailTags {
         wasm.__wbg_trailtags_free(ptr, 0);
     }
     /**
+     * Builds a transaction that adds a tag to the trail registry.
+     *
+     * @remarks
+     * Inserted with a usage count of zero. The on-chain call aborts when the tag is already in
+     * the registry. Added tags become available to future tagged record writes and role-tag
+     * restrictions.
+     *
+     * Requires the {@link Permission.AddRecordTags} permission.
+     *
+     * @param tag - Tag name to add to the registry.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link AddRecordTag} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
      * @param {string} tag
      * @returns {TransactionBuilder<AddRecordTag>}
      */
@@ -5058,6 +7037,31 @@ export class TrailTags {
         return TransactionBuilder.__wrap(ret[0]);
     }
     /**
+     * Lists every tag in the trail's registry alongside its current usage count.
+     *
+     * @returns Tag entries sorted alphabetically by tag name.
+     *
+     * @throws When the trail object cannot be fetched.
+     * @returns {Promise<RecordTagEntry[]>}
+     */
+    list() {
+        const ret = wasm.trailtags_list(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Builds a transaction that removes a tag from the trail registry.
+     *
+     * @remarks
+     * The tag must currently be in the registry and must not be referenced by any record or
+     * role-tag restriction; the on-chain call aborts otherwise.
+     *
+     * Requires the {@link Permission.DeleteRecordTags} permission.
+     *
+     * @param tag - Tag name to remove from the registry.
+     *
+     * @returns A {@link TransactionBuilder} wrapping the {@link RemoveRecordTag} transaction.
+     *
+     * @throws When the wrapper was created from a read-only client.
      * @param {string} tag
      * @returns {TransactionBuilder<RemoveRecordTag>}
      */
@@ -5292,6 +7296,15 @@ export class TransactionOutput {
 }
 if (Symbol.dispose) TransactionOutput.prototype[Symbol.dispose] = TransactionOutput.prototype.free;
 
+/**
+ * Transaction wrapper for updating the delete-record window.
+ *
+ * @remarks
+ * Updates only the rule that locks individual records against deletion (time-based or
+ * count-based).
+ *
+ * Requires the {@link Permission.UpdateLockingConfigForDeleteRecord} permission.
+ */
 export class UpdateDeleteRecordWindow {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -5318,6 +7331,13 @@ export class UpdateDeleteRecordWindow {
         wasm.__wbg_updatedeleterecordwindow_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -5329,6 +7349,14 @@ export class UpdateDeleteRecordWindow {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -5339,6 +7367,14 @@ export class UpdateDeleteRecordWindow {
 }
 if (Symbol.dispose) UpdateDeleteRecordWindow.prototype[Symbol.dispose] = UpdateDeleteRecordWindow.prototype.free;
 
+/**
+ * Transaction wrapper for updating the delete-trail lock.
+ *
+ * @remarks
+ * The new lock must not be {@link TimeLock.withUntilDestroyed}.
+ *
+ * Requires the {@link Permission.UpdateLockingConfigForDeleteTrail} permission.
+ */
 export class UpdateDeleteTrailLock {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -5365,6 +7401,13 @@ export class UpdateDeleteTrailLock {
         wasm.__wbg_updatedeletetraillock_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -5376,6 +7419,14 @@ export class UpdateDeleteTrailLock {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -5386,6 +7437,15 @@ export class UpdateDeleteTrailLock {
 }
 if (Symbol.dispose) UpdateDeleteTrailLock.prototype[Symbol.dispose] = UpdateDeleteTrailLock.prototype.free;
 
+/**
+ * Transaction wrapper for replacing the full locking configuration.
+ *
+ * @remarks
+ * The supplied configuration's `deleteTrailLock` must not be {@link TimeLock.withUntilDestroyed};
+ * the call aborts on-chain otherwise.
+ *
+ * Requires the {@link Permission.UpdateLockingConfig} permission.
+ */
 export class UpdateLockingConfig {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -5412,6 +7472,13 @@ export class UpdateLockingConfig {
         wasm.__wbg_updatelockingconfig_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -5423,6 +7490,14 @@ export class UpdateLockingConfig {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -5433,6 +7508,14 @@ export class UpdateLockingConfig {
 }
 if (Symbol.dispose) UpdateLockingConfig.prototype[Symbol.dispose] = UpdateLockingConfig.prototype.free;
 
+/**
+ * Transaction wrapper for mutable-metadata updates.
+ *
+ * @remarks
+ * Passing `null`/`undefined` for the new metadata clears the `updatableMetadata` field on-chain.
+ *
+ * Requires the {@link Permission.UpdateMetadata} permission.
+ */
 export class UpdateMetadata {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -5459,6 +7542,13 @@ export class UpdateMetadata {
         wasm.__wbg_updatemetadata_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -5470,6 +7560,14 @@ export class UpdateMetadata {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -5480,6 +7578,17 @@ export class UpdateMetadata {
 }
 if (Symbol.dispose) UpdateMetadata.prototype[Symbol.dispose] = UpdateMetadata.prototype.free;
 
+/**
+ * Transaction wrapper for updating a role.
+ *
+ * @remarks
+ * Replaces both the role's permissions and its `roleTags`; any newly supplied tag must already be
+ * in the trail's record-tag registry.
+ *
+ * Requires the {@link Permission.UpdateRoles} permission.
+ *
+ * Emits a {@link RoleUpdated} event on success.
+ */
 export class UpdateRole {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -5506,6 +7615,15 @@ export class UpdateRole {
         wasm.__wbg_updaterole_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events and decodes the matching event payload.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @returns Decoded {@link RoleUpdated} event payload.
+     *
+     * @throws When the expected event is missing or transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -5517,6 +7635,14 @@ export class UpdateRole {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -5527,6 +7653,14 @@ export class UpdateRole {
 }
 if (Symbol.dispose) UpdateRole.prototype[Symbol.dispose] = UpdateRole.prototype.free;
 
+/**
+ * Transaction wrapper for updating the write lock.
+ *
+ * @remarks
+ * While the new lock is active, {@link TrailRecords.add} aborts on-chain.
+ *
+ * Requires the {@link Permission.UpdateLockingConfigForWrite} permission.
+ */
 export class UpdateWriteLock {
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -5553,6 +7687,13 @@ export class UpdateWriteLock {
         wasm.__wbg_updatewritelock_free(ptr, 0);
     }
     /**
+     * Applies transaction effects and events.
+     *
+     * @param wasmEffects - Effects of the executed transaction.
+     * @param wasmEvents - Events emitted by the executed transaction.
+     * @param client - Read-only core client used during application.
+     *
+     * @throws When transaction application fails.
      * @param {TransactionEffects} wasm_effects
      * @param {IotaEvent[]} wasm_events
      * @param {CoreClientReadOnly} client
@@ -5564,6 +7705,14 @@ export class UpdateWriteLock {
         return ret;
     }
     /**
+     * Builds the programmable transaction bytes for submission.
+     *
+     * @param client - Read-only core client used to resolve packages and serialize the
+     * transaction.
+     *
+     * @returns BCS-encoded programmable transaction bytes ready for signing and submission.
+     *
+     * @throws When transaction serialization fails.
      * @param {CoreClientReadOnly} client
      * @returns {Promise<Uint8Array>}
      */
@@ -5757,6 +7906,9 @@ export class WasmManagedCoreClientReadOnly {
 }
 if (Symbol.dispose) WasmManagedCoreClientReadOnly.prototype[Symbol.dispose] = WasmManagedCoreClientReadOnly.prototype.free;
 
+/**
+ * Installs the panic hook used by the wasm bindings.
+ */
 export function start() {
     wasm.start();
 }
@@ -5873,11 +8025,11 @@ function __wbg_get_imports() {
         __wbg_append_a992ccc37aa62dc4: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
             arg0.append(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
         }, arguments); },
-        __wbg_applyWithEvents_c454426bf9839c68: function() { return handleError(function (arg0, arg1, arg2, arg3) {
+        __wbg_applyWithEvents_db3fab2faf607521: function() { return handleError(function (arg0, arg1, arg2, arg3) {
             const ret = arg0.applyWithEvents(arg1, arg2, arg3);
             return ret;
         }, arguments); },
-        __wbg_apply_317eb79698c55f0d: function() { return handleError(function (arg0, arg1, arg2) {
+        __wbg_apply_ec64922ba7a410f2: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = arg0.apply(arg1, arg2);
             return ret;
         }, arguments); },
@@ -5901,11 +8053,11 @@ function __wbg_get_imports() {
             const ret = AuditTrailDeleted.__wrap(arg0);
             return ret;
         },
-        __wbg_buildProgrammableTransaction_299a88990fa988d7: function() { return handleError(function (arg0, arg1) {
+        __wbg_buildProgrammableTransaction_7d04ad3675267caa: function() { return handleError(function (arg0, arg1) {
             const ret = arg0.buildProgrammableTransaction(arg1);
             return ret;
         }, arguments); },
-        __wbg_build_16306cb0ee9c2881: function() { return handleError(function (arg0) {
+        __wbg_build_5dba5df94cae1cdc: function() { return handleError(function (arg0) {
             const ret = arg0.build();
             return ret;
         }, arguments); },
@@ -5969,11 +8121,11 @@ function __wbg_get_imports() {
             const ret = DestroyInitialAdminCapability.__wrap(arg0);
             return ret;
         },
-        __wbg_devInspectTransactionBlock_07f7670bfd7e2dce: function(arg0, arg1) {
+        __wbg_devInspectTransactionBlock_dbe778b28387b0ef: function(arg0, arg1) {
             const ret = arg0.devInspectTransactionBlock(arg1);
             return ret;
         },
-        __wbg_digest_dbe357479b6546d4: function(arg0, arg1) {
+        __wbg_digest_7f85dc89b92836cc: function(arg0, arg1) {
             const ret = arg1.digest;
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
@@ -6007,7 +8159,7 @@ function __wbg_get_imports() {
                 wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
             }
         },
-        __wbg_executeTransactionBlock_3e21f77827056ab6: function(arg0, arg1) {
+        __wbg_executeTransactionBlock_1ea5643da94aa162: function(arg0, arg1) {
             const ret = arg0.executeTransactionBlock(arg1);
             return ret;
         },
@@ -6019,7 +8171,7 @@ function __wbg_get_imports() {
             const ret = arg0.fetch(arg1);
             return ret;
         },
-        __wbg_fromBytes_8301e3936502cba6: function() { return handleError(function (arg0) {
+        __wbg_fromBytes_51fce44ca5e07718: function() { return handleError(function (arg0) {
             const ret = TransactionDataBuilder.fromBytes(arg0);
             return ret;
         }, arguments); },
@@ -6027,35 +8179,35 @@ function __wbg_get_imports() {
             const ret = GasStationParams.__wrap(arg0);
             return ret;
         },
-        __wbg_getChainIdentifier_7803619c58ec01ec: function(arg0) {
+        __wbg_getChainIdentifier_ad5a4f8ce2464b26: function(arg0) {
             const ret = arg0.getChainIdentifier();
             return ret;
         },
-        __wbg_getCoins_1c9317d9f9eee1de: function(arg0, arg1) {
+        __wbg_getCoins_23666fdb35e527c7: function(arg0, arg1) {
             const ret = arg0.getCoins(arg1);
             return ret;
         },
-        __wbg_getDynamicFieldObjectV2_299d991e6209bb63: function(arg0, arg1) {
+        __wbg_getDynamicFieldObjectV2_227432b95db96cde: function(arg0, arg1) {
             const ret = arg0.getDynamicFieldObjectV2(arg1);
             return ret;
         },
-        __wbg_getDynamicFieldObject_8c341bf2c7340eb5: function(arg0, arg1) {
+        __wbg_getDynamicFieldObject_1a055aeda68455f4: function(arg0, arg1) {
             const ret = arg0.getDynamicFieldObject(arg1);
             return ret;
         },
-        __wbg_getObject_97d7377e349ed622: function(arg0, arg1) {
+        __wbg_getObject_368bbae913cfd6ed: function(arg0, arg1) {
             const ret = arg0.getObject(arg1);
             return ret;
         },
-        __wbg_getOwnedObjects_58c04c4291337473: function(arg0, arg1) {
+        __wbg_getOwnedObjects_47c5b4eef5e1a6f4: function(arg0, arg1) {
             const ret = arg0.getOwnedObjects(arg1);
             return ret;
         },
-        __wbg_getReferenceGasPrice_2d5730be6b76ef54: function(arg0) {
+        __wbg_getReferenceGasPrice_b3066b10e8bf827d: function(arg0) {
             const ret = arg0.getReferenceGasPrice();
             return ret;
         },
-        __wbg_getTransactionBlock_87c4906566d3ff77: function(arg0, arg1) {
+        __wbg_getTransactionBlock_4746277ec008b303: function(arg0, arg1) {
             const ret = arg0.getTransactionBlock(arg1);
             return ret;
         },
@@ -6067,22 +8219,22 @@ function __wbg_get_imports() {
             const ret = Reflect.get(arg0, arg1);
             return ret;
         }, arguments); },
-        __wbg_get_digest_87a4c998659f499f: function(arg0, arg1) {
+        __wbg_get_digest_bc5c4e90875195b1: function(arg0, arg1) {
             const ret = arg1.get_digest();
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg_get_effects_868ff854440819ce: function(arg0) {
+        __wbg_get_effects_973be000113df2f4: function(arg0) {
             const ret = arg0.get_effects();
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_get_events_60a7d0d61cae81bc: function(arg0) {
+        __wbg_get_events_b308b7cb94770c11: function(arg0) {
             const ret = arg0.get_events();
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_get_response_a137d0ded16b6ae7: function(arg0) {
+        __wbg_get_response_a72b90f85718f441: function(arg0) {
             const ret = arg0.get_response();
             return ret;
         },
@@ -6158,11 +8310,11 @@ function __wbg_get_imports() {
             const ret = result;
             return ret;
         },
-        __wbg_iotaClient_a212f7452132b8a8: function(arg0) {
+        __wbg_iotaClient_24ddb3f83dea4291: function(arg0) {
             const ret = arg0.iotaClient();
             return ret;
         },
-        __wbg_iotaPublicKeyBytes_0fe5725eec923e29: function() { return handleError(function (arg0) {
+        __wbg_iotaPublicKeyBytes_7cec9ecfd368b7a4: function() { return handleError(function (arg0) {
             const ret = arg0.iotaPublicKeyBytes();
             return ret;
         }, arguments); },
@@ -6190,7 +8342,7 @@ function __wbg_get_imports() {
             const ret = arg0.length;
             return ret;
         },
-        __wbg_log_e07e5e14b696924e: function(arg0, arg1) {
+        __wbg_log_5d7b743e666d40ec: function(arg0, arg1) {
             console.log(getStringFromWasm0(arg0, arg1));
         },
         __wbg_message_9ddc4b9a62a7c379: function(arg0) {
@@ -6201,7 +8353,7 @@ function __wbg_get_imports() {
             const ret = Migrate.__wrap(arg0);
             return ret;
         },
-        __wbg_network_646b075c613e03fa: function(arg0, arg1) {
+        __wbg_network_d139b7a0473fb8b3: function(arg0, arg1) {
             const ret = arg1.network();
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
@@ -6214,10 +8366,6 @@ function __wbg_get_imports() {
         },
         __wbg_new_3eb36ae241fe6f44: function() {
             const ret = new Array();
-            return ret;
-        },
-        __wbg_new_5b88e8c6e665432c: function(arg0) {
-            const ret = new WasmIotaTransactionBlockResponseWrapper(arg0);
             return ret;
         },
         __wbg_new_64284bd487f9d239: function() { return handleError(function () {
@@ -6239,7 +8387,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h3c2c58ba82e1b53c(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__ha81af4b9cdb0031f(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -6262,7 +8410,11 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(arg0);
             return ret;
         },
-        __wbg_new_ed25519_pk_base64_ccda25677364dfe2: function() { return handleError(function (arg0, arg1) {
+        __wbg_new_eaf1720e8edc04b9: function(arg0) {
+            const ret = new WasmIotaTransactionBlockResponseWrapper(arg0);
+            return ret;
+        },
+        __wbg_new_ed25519_pk_base64_7486bde54235ce90: function() { return handleError(function (arg0, arg1) {
             const ret = new Ed25519PublicKey(getStringFromWasm0(arg0, arg1));
             return ret;
         }, arguments); },
@@ -6274,11 +8426,11 @@ function __wbg_get_imports() {
             const ret = new Function(getStringFromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg_new_secp256k1_pk_base64_b6aec18d1be1e7e5: function() { return handleError(function (arg0, arg1) {
+        __wbg_new_secp256k1_pk_base64_aa1335dc4e1585b1: function() { return handleError(function (arg0, arg1) {
             const ret = new Secp256k1PublicKey(getStringFromWasm0(arg0, arg1));
             return ret;
         }, arguments); },
-        __wbg_new_secp256r1_pk_base64_79baee8f09af303b: function() { return handleError(function (arg0, arg1) {
+        __wbg_new_secp256r1_pk_base64_1535954d34de2151: function() { return handleError(function (arg0, arg1) {
             const ret = new Secp256r1PublicKey(getStringFromWasm0(arg0, arg1));
             return ret;
         }, arguments); },
@@ -6294,7 +8446,11 @@ function __wbg_get_imports() {
             const ret = arg0.next;
             return ret;
         },
-        __wbg_objectId_5d1011f1689f140c: function(arg0, arg1) {
+        __wbg_now_a3af9a2f4bbaa4d1: function() {
+            const ret = Date.now();
+            return ret;
+        },
+        __wbg_objectId_03aa49d2713a929a: function(arg0, arg1) {
             const ret = arg1.objectId;
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
@@ -6305,7 +8461,7 @@ function __wbg_get_imports() {
             const ret = OnChainAuditTrail.__wrap(arg0);
             return ret;
         },
-        __wbg_packageHistory_fbbcfb89177f3284: function(arg0, arg1) {
+        __wbg_packageHistory_4a90483ab2cad04f: function(arg0, arg1) {
             const ret = arg1.packageHistory();
             const ptr1 = passArrayJsValueToWasm0(ret, wasm.__wbindgen_malloc);
             const len1 = WASM_VECTOR_LEN;
@@ -6362,6 +8518,10 @@ function __wbg_get_imports() {
             const ret = RevokeCapability.__wrap(arg0);
             return ret;
         },
+        __wbg_revokedcapabilitiescleanedup_new: function(arg0) {
+            const ret = RevokedCapabilitiesCleanedUp.__wrap(arg0);
+            return ret;
+        },
         __wbg_revokeinitialadmincapability_new: function(arg0) {
             const ret = RevokeInitialAdminCapability.__wrap(arg0);
             return ret;
@@ -6386,18 +8546,18 @@ function __wbg_get_imports() {
             const ret = RoleUpdated.__wrap(arg0);
             return ret;
         },
-        __wbg_send_5ad72b6776a27a57: function() { return handleError(function (arg0, arg1) {
+        __wbg_send_36d49e9cd9125289: function() { return handleError(function (arg0, arg1) {
             const ret = arg0.send(arg1);
             return ret;
         }, arguments); },
-        __wbg_senderAddress_6e4049a38851dd66: function(arg0, arg1) {
+        __wbg_senderAddress_80d51de0320d1203: function(arg0, arg1) {
             const ret = arg1.senderAddress();
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg_senderPublicKey_55a7b6679306dfa0: function(arg0) {
+        __wbg_senderPublicKey_d3c6a3cdf00e008b: function(arg0) {
             const ret = arg0.senderPublicKey();
             return ret;
         },
@@ -6439,7 +8599,7 @@ function __wbg_get_imports() {
         __wbg_set_signal_f2d3f8599248896d: function(arg0, arg1) {
             arg0.signal = arg1;
         },
-        __wbg_sign_a8a4dd5e34b3653e: function() { return handleError(function (arg0, arg1, arg2) {
+        __wbg_sign_12917c68afef32dd: function() { return handleError(function (arg0, arg1, arg2) {
             var v0 = getArrayU8FromWasm0(arg1, arg2).slice();
             wasm.__wbindgen_free(arg1, arg2 * 1, 1);
             const ret = arg0.sign(v0);
@@ -6449,7 +8609,7 @@ function __wbg_get_imports() {
             const ret = arg0.signal;
             return ret;
         },
-        __wbg_signer_3fb0df26da0b2db1: function(arg0) {
+        __wbg_signer_adb29f2463937462: function(arg0) {
             const ret = arg0.signer();
             return ret;
         },
@@ -6487,7 +8647,7 @@ function __wbg_get_imports() {
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg_tfComponentsPackageId_81fe798fe14e3b8a: function(arg0, arg1) {
+        __wbg_tfComponentsPackageId_c1fe4f98c2f72a7a: function(arg0, arg1) {
             const ret = arg1.tfComponentsPackageId();
             var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             var len1 = WASM_VECTOR_LEN;
@@ -6502,7 +8662,7 @@ function __wbg_get_imports() {
             const ret = arg0.then(arg1);
             return ret;
         },
-        __wbg_toIotaPublicKey_873e5a6861b75449: function(arg0, arg1) {
+        __wbg_toIotaPublicKey_5c6209f1dc2bb09f: function(arg0, arg1) {
             const ret = arg1.toIotaPublicKey();
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
@@ -6513,7 +8673,7 @@ function __wbg_get_imports() {
             const ret = arg0.toString();
             return ret;
         },
-        __wbg_to_string_9bd72c89b21cc7bc: function(arg0, arg1) {
+        __wbg_to_string_ca025be11ced4aec: function(arg0, arg1) {
             const ret = arg1.to_string();
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
@@ -6563,14 +8723,14 @@ function __wbg_get_imports() {
             const ret = arg0.value;
             return ret;
         },
-        __wbg_version_c167c920b4264a42: function(arg0, arg1) {
+        __wbg_version_41a27f9dbe949285: function(arg0, arg1) {
             const ret = arg1.version;
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg_waitForTransaction_631f3c339a41dfb4: function(arg0, arg1) {
+        __wbg_waitForTransaction_2e0da294a2739905: function(arg0, arg1) {
             const ret = arg0.waitForTransaction(arg1);
             return ret;
         },
@@ -6579,13 +8739,13 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 1431, function: Function { arguments: [Externref], shim_idx: 1432, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h51a12a66d4da83b9, wasm_bindgen__convert__closures_____invoke__h6b4e9b9236ca6a14);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 1465, function: Function { arguments: [Externref], shim_idx: 1466, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5881a399a337e4a2, wasm_bindgen__convert__closures_____invoke__ha54189d283321948);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 921, function: Function { arguments: [], shim_idx: 922, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h8d7b4eaef5c6c593, wasm_bindgen__convert__closures_____invoke__h1622ecdfbc350ccf);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 934, function: Function { arguments: [], shim_idx: 935, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h6ea63990b8676bb9, wasm_bindgen__convert__closures_____invoke__h69881d0468c0e87e);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -6616,6 +8776,20 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000008: function(arg0, arg1) {
+            var v0 = getArrayJsValueFromWasm0(arg0, arg1).slice();
+            wasm.__wbindgen_free(arg0, arg1 * 4, 4);
+            // Cast intrinsic for `Vector(NamedExternref("RecordTagEntry")) -> Externref`.
+            const ret = v0;
+            return ret;
+        },
+        __wbindgen_cast_0000000000000009: function(arg0, arg1) {
+            var v0 = getArrayU64FromWasm0(arg0, arg1).slice();
+            wasm.__wbindgen_free(arg0, arg1 * 8, 8);
+            // Cast intrinsic for `Vector(U64) -> Externref`.
+            const ret = v0;
+            return ret;
+        },
+        __wbindgen_cast_000000000000000a: function(arg0, arg1) {
             var v0 = getArrayU8FromWasm0(arg0, arg1).slice();
             wasm.__wbindgen_free(arg0, arg1 * 1, 1);
             // Cast intrinsic for `Vector(U8) -> Externref`.
@@ -6638,16 +8812,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h1622ecdfbc350ccf(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h1622ecdfbc350ccf(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__h69881d0468c0e87e(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h69881d0468c0e87e(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h6b4e9b9236ca6a14(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h6b4e9b9236ca6a14(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__ha54189d283321948(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__ha54189d283321948(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3c2c58ba82e1b53c(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3c2c58ba82e1b53c(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__ha81af4b9cdb0031f(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__ha81af4b9cdb0031f(arg0, arg1, arg2, arg3);
 }
 
 
@@ -6796,6 +8970,9 @@ const RevokeCapabilityFinalization = (typeof FinalizationRegistry === 'undefined
 const RevokeInitialAdminCapabilityFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_revokeinitialadmincapability_free(ptr >>> 0, 1));
+const RevokedCapabilitiesCleanedUpFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_revokedcapabilitiescleanedup_free(ptr >>> 0, 1));
 const RoleAdminPermissionsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_roleadminpermissions_free(ptr >>> 0, 1));
