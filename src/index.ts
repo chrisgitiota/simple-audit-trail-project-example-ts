@@ -8,18 +8,19 @@ import {
     LockingWindow,
     PackageOverrides,
     TimeLock
-} from "@iota/audit-trail";
+} from "@iota/audit-trails/node";
 import {strict as assert} from "assert";
 import {Ed25519Keypair} from "@iota/iota-sdk/keypairs/ed25519";
 import {getNetwork, IotaClient, NetworkId} from "@iota/iota-sdk/client";
-import { Transaction } from '@iota/iota-sdk/transactions';
 import {getFaucetHost, requestIotaFromFaucetV0} from "@iota/iota-sdk/faucet";
 import {Ed25519KeypairSigner} from "@iota/iota-interaction-ts/node/test_utils";
 
-const networkId: NetworkId = "testnet"; // Change to "mainnet" for mainnet
+const networkId: NetworkId = "devnet"; // Change to "mainnet" for mainnet
 
-const IOTA_AUDIT_TRAIL_PKG_ID = "0x7655d346145e2ba7fcb6a5c63b4b9ec18a92c435364206e5c3f3dfd8cb95d98d";   // testnet
-const IOTA_TF_COMPONENTS_PKG_ID = "0x098767e6cd008f341847ad68089300375a274899b1c718e8cf8f5d57f96e8607"; // testnet
+// If you need to specify custom package addresses (i.e. for localnet usage) uncomment the following lines and
+// the code sequence where `createWithPackageOverrides` is used below
+// const IOTA_AUDIT_TRAIL_PKG_ID = "0x7655d346145e2ba7fcb6a5c63b4b9ec18a92c435364206e5c3f3dfd8cb95d98d";   // testnet
+// const IOTA_TF_COMPONENTS_PKG_ID = "0x098767e6cd008f341847ad68089300375a274899b1c718e8cf8f5d57f96e8607"; // testnet
 
 async function requestFunds(address: string) {
     await requestIotaFromFaucetV0({
@@ -45,11 +46,15 @@ async function getFundedAuditTrailClient(iotaClient: IotaClient) {
         );
     }
 
-    const notarizationClientReadOnly = await AuditTrailClientReadOnly.createWithPackageOverrides(
-        iotaClient,
-        new PackageOverrides(IOTA_AUDIT_TRAIL_PKG_ID, IOTA_TF_COMPONENTS_PKG_ID),
-    );
-    return await AuditTrailClient.create(notarizationClientReadOnly, signer);
+    // Uncomment the following lines if you need to specify custom package addresses (i.e. for localnet usage)
+    // const auditTrailClientReadOnly = await AuditTrailClientReadOnly.createWithPackageOverrides(
+    //     iotaClient,
+    //     new PackageOverrides(IOTA_AUDIT_TRAIL_PKG_ID, IOTA_TF_COMPONENTS_PKG_ID),
+    // );
+
+    const auditTrailClientReadOnly = await AuditTrailClientReadOnly.create(iotaClient);
+
+    return await AuditTrailClient.create(auditTrailClientReadOnly, signer);
 }
 
 export function defaultLockingConfig(): LockingConfig {

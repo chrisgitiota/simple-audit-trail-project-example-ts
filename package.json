@@ -12,9 +12,9 @@
     "tsc": "tsc"
   },
   "dependencies": {
-    "@iota/iota-interaction-ts": "^0.11.0",
-    "@iota/iota-sdk": "^1.10.1",
-    "@iota/audit-trail": "file:./audit_trail/node"
+    "@iota/audit-trails": "^0.1.1",
+    "@iota/iota-interaction-ts": "^0.14.0",
+    "@iota/iota-sdk": "^1.14.0"
   },
   "devDependencies": {
     "ts-node": "^10.9.2",
